@@ -1,0 +1,279 @@
+---
+title: "homework 14"
+author: "Nathan Kurtz-Enko"
+date: "4/9/2019"
+output: pdf_document
+---
+
+```{r, include = FALSE}
+library(tidyverse)
+library(tree)
+library(randomForest)
+library(ineq)
+library(glmnet)
+```
+
+
+# Assignment
+ Compute the Out of Bag error...by hand.
+ Out of bag error means we use the left overs from the bootstrapping
+ to estimate the error rate
+ At each bootstrap, compute the error rate and save the value
+ Modifiy the "Bootstrapping by Hand" computation above to
+ account for the the "leftovers" from boot strapping
+ Use these to make predictions.
+ How does your oob error rate compare to the oob error rate reported
+ by randomForest?
+
+```{r}
+#read in spam
+
+spam.df <- read.csv("/home/rstudio/users/kurtze1/ADM/class/SPAM.csv")
+
+```
+
+```{r}
+#define bootstrapping and bagging mse stuff
+mseBoot <- function(data.df,M=50){
+    sampleSize <- nrow(data.df)
+    mse <- rep(0,M)
+    for(m in 1:M){
+        bootSamp <- sample(1:sampleSize,sampleSize,rep=T)
+        outOfBag <- setdiff(1:sampleSize,bootSamp)
+        train.df <- data.df[bootSamp,]
+        test.df <-   data.df[outOfBag,]
+        mod <- lm(IsSpam~.,data=train.df)
+        vals <- predict(mod,newdata=test.df)
+        mse[m] <- with(test.df,mean((IsSpam-vals)^2))
+    }
+    mean(mse)
+}
+```
+
+```{r, warning = FALSE, message = FALSE}
+#out of bag mse
+oob_mse <- mseBoot(spam.df)
+```
+
+
+```{r}
+#make sure response is factor
+spam.df <- mutate(spam.df,
+                  IsSpam=factor(IsSpam))
+
+#define test and training sets for randomForest
+numRows <- nrow(spam.df)
+train <- sample(1:numRows,numRows/2,rep=F)
+spamTrain.df <- spam.df[train,]
+spamTest.df <- spam.df[-train,]
+
+##We need to note the number of predictors
+p <- ncol(spamTrain.df)-1
+
+#random forest stuff
+spam.rf <- randomForest(IsSpam~.,
+                         data=spamTrain.df,
+                         mtry=p/3, 
+                        ntree=100,
+                        importance=T) ## 100 trees
+
+pred <- predict(spam.rf, newdata = spamTest.df )
+
+rf_mse <- mean((spamTest.df$IsSpam!=pred)) 
+```
+
+```{r}
+#comparison error rates
+c(oob_mse, rf_mse)
+```
+
+#######################################################
+## Generate a better importance plot, more like Figure 8.9 of ISLR!
+
+```{r}
+stuff2 <- tibble(vars = factor(names(spam.df)[-1]), importance = (importance(spam.rf))[,4])
+stuff <- arrange(stuff2, desc(importance))
+
+ggplot(stuff)+
+  geom_bar(aes(x = vars, y = importance), stat = "identity", fill = "blue")+
+  coord_flip()+
+  theme(text = element_text(size = 7))
+```
+
+
+2. A CASI data set related to ALS
+ http://web.stanford.edu/~hastie/CASI_files/DATA/ALS.html
+ You can read the data directly from the website via:
+
+ Between Ridge, Lasso, BAGGING, and Random Forests, which does the
+ best job of predicting dFRS? Justify your conclusion.
+ 
+```{r}
+ als.df <- read.table("http://web.stanford.edu/~hastie/CASI_files/DATA/ALS.txt",header=TRUE)
+```
+
+ 
+```{r}
+
+#define test and training sets for randomForest
+numRows <- nrow(als.df)
+train <- sample(1:numRows,numRows/2,rep=F)
+alsTrain.df <- als.df[train,]
+alsTest.df <- als.df[-train,]
+
+##We need to note the number of predictors
+p <- ncol(alsTrain.df)-1
+
+#random forest stuff
+als.rf <- randomForest(dFRS~.,
+                         data=alsTrain.df,
+                         mtry=p/3, 
+                        ntree=100,
+                        importance=T) ## 100 trees
+
+pred <- predict(als.rf, newdata = alsTest.df)
+
+rf_mse <- mean((alsTest.df$dFRS-pred)^2)
+```
+
+```{r}
+als.bagging <- randomForest(dFRS~.,
+                         data=alsTrain.df,
+                         mtry=p, ##use all the predictors
+                        ntree=100,
+                        importance=T) ## 100 treesd
+pred <- predict(als.bagging, newdata = alsTest.df)
+
+bagging_err <- mean((alsTest.df$dFRS-pred)^2)
+```
+
+
+```{r}
+#ridge regression
+
+#get data ready
+n <- nrow(als.df)
+train <- sample(1:n, n/2, replace = FALSE)
+train.df <- as.matrix(als.df[train,])
+test.df <- as.matrix(als.df[-train,])
+train.x <- train.df[,-2]
+train.y <- train.df[,2]
+test.x <- test.df[,-2]
+test.y <- test.df[,2]
+```
+
+```{r}
+
+#find best value for lambda 
+cv.ridge <- cv.glmnet(train.x, train.y)
+l <- cv.ridge$lamdba.min
+
+mod.ridge <- glmnet(train.x, as.numeric(train.y), alpha = 0, lambda = l)
+
+pred <- predict(mod.ridge, newx = test.x)
+err_ridge <- mean((test.y-pred)^2)
+```
+
+```{r}
+#lasso
+mod.lasso <- glmnet(train.x, train.y, alpha = 1, lambda = l)
+
+pred<- predict(mod.lasso, newx = test.x)
+
+err_lasso <- mean((test.y-pred)^2)
+```
+
+```{r}
+c(bagging_err, rf_mse, err_ridge, err_lasso)
+```
+
+3. Errors as function of tree size:
+ For the SPAM Data.
+ Construct Figure 17.2 page 328 of CASI
+ https://web.stanford.edu/~hastie/CASI_files/PDF/casi.pdf
+ 
+```{r}
+spam.df <- read.csv("/home/rstudio/users/kurtze1/ADM/class/SPAM.csv")
+#make sure response is factor
+spam.df <- mutate(spam.df,
+                  IsSpam=factor(IsSpam))
+
+#define test and training sets for randomForest
+numRows <- nrow(spam.df)
+train <- sample(1:numRows,numRows/2,rep=F)
+spamTrain.df <- spam.df[train,]
+spamTest.df <- spam.df[-train,]
+
+##We need to note the number of predictors
+p <- ncol(spamTrain.df)-1
+```
+
+```{r}
+numTree <- 100
+stuff <- tibble(trees = 1:100, bagging_err = 1:100, rf_err = 1:100)
+for(t in 1:numTree){
+  #random forest
+  spam.rf <- randomForest(IsSpam~.,
+                         data=spamTrain.df,
+                         mtry=p/3, 
+                        ntree=t,
+                        importance=T) ## 100 trees
+
+  pred <- predict(spam.rf, newdata = spamTest.df )
+  rf_mse <- mean((spamTest.df$IsSpam!=pred))
+  #bagging
+  spam.bag <- randomForest(IsSpam~.,
+                         data=spamTrain.df,
+                         mtry=p/3, 
+                        ntree=t,
+                        importance=T) ## 100 trees
+  pred <- predict(spam.bag, newdata = spamTest.df )
+  bag_mse <- mean((spamTest.df$IsSpam!= pred))
+  #recording
+  stuff[t,2] = bag_mse
+  stuff[t,3] = rf_mse
+  #print(t)
+}
+```
+
+```{r}
+#single tree
+mod.tree <- tree(IsSpam~.,
+              data=spamTrain.df,
+              control=tree.control(nrow(spamTrain.df),
+                                   mindev=0.01)) 
+preds <- predict(mod.tree, newdata = spamTest.df)
+tree_err <- mean((spamTest.df$IsSpam!=preds))
+```
+
+```{r}
+#lasso
+#get data ready
+spam.df <- read.csv("/home/rstudio/users/kurtze1/ADM/class/SPAM.csv")
+n <- nrow(spam.df)
+train <- sample(1:n, n/2, replace = FALSE)
+train.df <- as.matrix(spam.df[train,])
+test.df <- as.matrix(spam.df[-train,])
+train.x <- train.df[,-2]
+train.y <- train.df[,2]
+test.x <- test.df[,-2]
+test.y <- test.df[,2]
+
+#find best value for lambda 
+cv.ridge <- cv.glmnet(train.x, as.numeric(train.y))
+l <- cv.ridge$lamdba.min
+
+mod.lasso <- glmnet(train.x, train.y, alpha = 1, lambda = l)
+
+pred<- predict(mod.lasso, newx = test.x)
+
+err_lasso <- mean((as.numeric(test.y)-pred)^2)
+```
+ 
+```{r}
+ggplot(stuff)+
+  geom_line(aes(x = trees, y = bagging_err), color = "red")+
+  geom_line(aes(x = trees, y = rf_err), color = "blue")+
+  geom_hline(yintercept = err_lasso)
+```
+

@@ -1,0 +1,332 @@
+---
+title: "homework 4"
+author: "Nathan Kurtz-Enko"
+date: "2/23/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(class) ##for knn function
+library(dplyr)
+library(BayesFactor)
+library(MASS) ##for mvnorm
+library(gridExtra) # for grid.arrange
+```
+
+## Your assignment
+Use KNN to build a classifier which will predict the outcome variable (5-year survival) based on this data set. Can you do better than the null rate?
+
+Produce a single, self-contained, nicely documented RMarkdown file with your analysis and conclusion (about the efficacy of your prediction algorithm). 
+
+Note:
+
+  * Make sure you scale your data
+  * Call your dataset haberman.csv. Include variables indicating the location
+  of the data. This way the graders (and me) can easily modify your RMarkdown   to load the data.
+* To calculate the error rate for a particular value of k, you must do multiple repetitions of the train/test process. A large number of repetitions will give a more solid estimate of the error rate. 
+* Visualizations are required. 
+
+```{r}
+#read in the data set
+haberman.csv <- read_csv("~/ADM/class/haberman.data.csv")
+```
+```{r}
+#find null rate
+null_rate <- sum(haberman.csv$outcome==2)/sum(haberman.csv$outcome)
+null_rate
+```
+
+```{r}
+#look at some visualizations of the data
+ggplot(data = haberman.csv, aes(x = year, y = nodes, color = as.character(outcome)))+
+  geom_point()
+
+ggplot(data = haberman.csv, aes(x = age, y = nodes, color = as.character(outcome)))+
+  geom_point()
+```
+
+```{r}
+#scale the data
+haberman0 <- scale(haberman.csv[,-4])
+haberman.csv.df <- data.frame(haberman0, outcome = haberman.csv$outcome)
+
+#check if scaling worked
+with(haberman.csv.df, c(mean(age), var(age)))
+with(haberman.csv, c(mean(age), var(age)))
+```
+
+```{r}
+#create categorical variable, if survived 5 years
+haberman1.csv.df <- haberman.csv.df %>%
+  mutate(did_survive = (outcome == 1))
+```
+
+```{r}
+#create training and testing data
+N <- nrow(haberman.csv.df)
+train_indices <- sample(1:N, N/2, replace = FALSE)
+train.df <- haberman1.csv.df[train_indices,]
+test.df <- haberman1.csv.df[-train_indices,]
+```
+
+```{r}
+#define training data, test data, and class for knn function
+train.dat<-train.df[,1:3]
+classes<-with(train.df,did_survive)
+test.dat<-test.df[,1:3]
+```
+
+```{r}
+#trying things out
+kval<-5
+knn.mod<-knn(train.dat,test.dat,classes,kval)
+```
+
+```{r}
+#checking accuracy
+with(test.df,table(did_survive,knn.mod))
+(err<-with(test.df,mean(did_survive!=knn.mod)))
+
+#this error rate is higher than the null rate
+```
+
+```{r}
+#let's try this a few times to make sure
+numReps<-25
+errs<-numeric(numReps)
+
+for(m in numReps){
+  train<-sample(1:N,N/2,rep=F)
+  train.df<-haberman1.csv.df[train,]
+  test.df<-haberman1.csv.df[-train,]
+  knn.mod<-knn(train.dat,test.dat,classes,kval)
+  errs[m]<-with(test.df,mean(did_survive!=knn.mod))
+}
+mean(errs)
+
+#this is actually lower than the null rate
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Assignment: Build the figures.
+
+*Goal*: Make a plot of test and training errors as a function of kval
+(the number of nearest neighbors).
+
+
+Here's the the plan.
+* For kval=1...kMax
+   + Generate (multiple) train+test
+   + For each train+test combo, calculate the test error. Take the mean of all         these
+   + Record the mean of the erors
+* Plot the mean of the errors as a function of kval.
+
+
+Here are the steps, taken verbatum from above.
+```{r}
+sd<- 3*sqrt(1/5)
+numMeans <- 4
+# mu0 <- mvrnorm(n,c(0,1),diag(1,2))
+# mu1 <- mvrnorm(n,c(1,0),diag(1,2))
+mu0<-cbind(rnorm(numMeans,1,sd),rnorm(numMeans,1,sd))
+mu1<-cbind(rnorm(numMeans,-1,sd),rnorm(numMeans,-1,sd))
+
+N <- 100
+kVal <- 30
+```
+
+```{r}
+buildData<-function(N){
+  rndMean <- sample(1:numMeans,N,rep=T)
+  vals0<- t(apply(mu0[rndMean,],1,function(mu) mvrnorm(1,mu,diag(2)*sd)))
+  rndMean <- sample(1:numMeans,N,rep=T)
+  vals1 <- t(apply(mu1[rndMean,],1,function(mu) mvrnorm(1,mu,diag(2)*sd)))
+  vals <- rbind(vals1,vals0)
+  data.frame(row=1:(2*N),x=vals[,1],y=vals[,2],class=rep(c("A","B"),each=N))
+}
+```
+
+Create the training and testing data
+```{r}
+N<-500
+train.df <-buildData(N)
+test.df <-buildData(N)
+```
+
+
+
+These are the stept. Package all this in a function of kval and M.
+```{r}
+calcErr_test <- function(kval,M){
+    errs <- array(0,M)
+    for(m in 1:M){
+       train.df <-buildData(N)
+       test.df <-buildData(N)
+        ##Build the model and compute the test error
+        mod.knn <-
+            knn(train.df[c("x","y")],
+                test.df[c("x","y")],
+                train.df$class,k=kval,prob=T)
+          errs[m] <- with(test.df,mean(class!=mod.knn))
+    }
+    mean(errs)
+}
+```
+
+Check that it works..
+
+```{r}
+calcErr_test(1,200)
+```
+This might take a while....
+```{r}
+maxK <- 150
+numReps<-10
+
+kVals<-seq(1,maxK,by=4)
+errs_test<-rep(0,length(kVals))
+cnt<-1
+for(k in kVals){
+  print(sprintf("Current k value: %s",k))
+  errs_test[cnt]<-calcErr_test(k,numReps)
+  cnt<-cnt+1
+}
+
+
+test_error.df <- data.frame(`k_inverse`=1/kVals,err=errs_test) 
+```
+
+
+
+
+We can see that the minimum test error occurs near 1/k = .60 or so. 
+## Your part. 
+Now add in the training error. Construct 2.17. Note that this
+figure includes the Bayes Error rate.
+
+```{r}
+distance <- function(x_i, x_f){
+  abs(x_f-x_i)
+}
+
+myKnn<-function(pt,kval,train_data,allResp=FALSE){
+  ##make sure kNear isn't too big
+  kval<-min(nrow(train_data),kval)
+  ##identify the classes
+  classes<- with(train_data, as.character(unique(class)))
+  xVals<-with(train_data,x)
+  tot<-length(xVals)
+  ##get the ascending order of distances
+  allOrds<-order(map_dbl(xVals,function(x) distance(x,pt)))
+  ##get the k closest
+  closest<-allOrds[1:kval]
+  ##Decide which class wins..not the most elegant ending.
+  ## But I haven't seen an easier way 
+  ##extract the classes of the the closest
+  ##Take the mean equal to classes[1]
+  p<-with(train_data[closest,],mean(class==classes[1]))
+  if(p>0.5){
+    res<-classes[1]
+  }else{
+    res<-classes[2]
+  }
+  ##Check how much output to return
+  if(allResp){
+    ## a list of resp, probability, and the indices of the nhbs.
+    list(res,p,(1:tot)[closest])
+  } else{
+    res
+  }
+}
+
+#extend prediction function to work over all data
+myKnn2 <- function(test_data,kval,train_data){
+   with(test_data,
+      ##send each x value in the data frame 
+      ## to myKnn.
+      ##map over the x values in test.df. 
+      ##map_chr because the returns are "A"/"B"
+     map_chr(x,
+             function(x1) myKnn(x1,kval,train_data)))
+}
+
+#calculate training error rate
+calcErr_train <- function(kval,M){
+    errs <- array(0,M)
+    for(m in 1:M){
+       train.df <-buildData(N)
+        ##Build the model and compute the test error
+       knn_pred <- myKnn2(train.df, kval, train.df)
+          errs[m] <- with(train.df,mean(class!=knn_pred))
+    }
+    mean(errs)
+}
+
+maxK <- 150
+numReps<-10
+
+kVals<-seq(1,maxK,by=4)
+
+errs_train<-rep(0,length(kVals))
+cnt<-1
+for(k in kVals){
+  print(sprintf("Current k value: %s",k))
+  errs_train[cnt]<-calcErr_train(k,numReps)
+  cnt<-cnt+1
+}
+
+
+train_error.df <- data.frame(`k_inverse`=1/kVals,err=errs_train) 
+```
+
+```{r}
+#bayes error
+bayesProb <- function(x,y){
+        ##(weighted) prob of coming from class 0 (
+        p0 <- mean(dnorm(x,mu0[,1],sd)*dnorm(y,mu0[,2],sd))
+        ##(weighted) prob of coming from class 1 (
+        p1 <- mean(dnorm(x,mu1[,1],sd)*dnorm(y,mu1[,2],sd))
+        # Actual probability of class 0.
+        p0/(p0+p1)
+}
+xvals<-train.df$x
+yvals<-train.df$y
+pvals <- tibble(p = 1:1000)
+for(i in 1:1000){
+  pvals[i,1] = bayesProb(xvals[i], yvals[i])
+}
+
+bayes.df<-data.frame(x = xvals,
+                     y = yvals,
+                     p = pvals$p) 
+  ## Here is the Bayes Classification
+bayes2.df <- bayes.df %>%
+  mutate(bf=factor(ifelse(p > 0.5,"A","B")))
+
+
+bayes_err <- mean((bayes2.df$bf) == (train.df$class))
+```
+```{r}
+#plot
+ggplot()+
+  geom_point(data = test_error.df, aes(x = `k_inverse`, y = err), color = "blue")+
+  geom_line(data = test_error.df, aes(x = `k_inverse`, y = err), color = "blue")+
+  geom_point(data = train_error.df, aes(x = `k_inverse`, y = err), color = "orange")+
+  geom_line(data = train_error.df, aes(x = `k_inverse`, y = err), color = "orange")+
+  geom_hline(yintercept = bayes_err)
+```
+

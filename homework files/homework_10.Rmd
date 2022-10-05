@@ -1,0 +1,151 @@
+---
+title: "homework 10"
+author: "Nathan Kurtz-Enko"
+date: "3/14/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readr)
+library(FNN)
+```
+
+#Homework Assignment: Wine Quality Prediction
+
+Go to: https://archive.ics.uci.edu/ml/datasets/Wine+Quality
+Use the white wine data set. Build a model to predict quality as
+a function of the predictors. Compare linear regression with KNN 
+(using knn.reg)
+For linear regression, use CV and/or bootstrap to determine the best (or at least a good)
+set of predictors.
+For KNN, determine the best choice of k.
+
+Note: before starting the modeling, scale the data!
+
+
+Pack the data into a data frame.
+
+```{r} 
+#read in and clean
+data <- read_csv("~/ADM/class/winequality-white.csv")
+data <- separate(data = data, col = 1, into = c("fixed acidity", "volatile acidity", "citric acid", "residual sugar", "chlorides", "free sulfur dioxide", "total sulfur dioxide", "density", "pH", "sulphates", "alcohol", "quality"), sep = ";")
+
+#make the columns have numeric values
+data <- data %>%
+  mutate(`fixed acidity` = as.numeric(`fixed acidity`),
+         `volatile acidity` = as.numeric(`volatile acidity`),
+         `citric acid` = as.numeric(`citric acid`),
+         `residual sugar` = as.numeric(`residual sugar`),
+         `chlorides` = as.numeric(`chlorides`),
+         `free sulfur dioxide` = as.numeric(`free sulfur dioxide`),
+         `total sulfur dioxide` = as.numeric(`total sulfur dioxide`),
+         `density` = as.numeric(`density`),
+         `pH` = as.numeric(`pH`),
+         `sulphates` = as.numeric(`sulphates`),
+         `alcohol` = as.numeric(`alcohol`),
+         `quality` = as.numeric(`quality`))
+
+
+```
+
+```{r}
+#scale data
+data <- as.tibble(scale(data))
+```
+
+#linear regression using CV
+
+```{r}
+#define folds
+numFolds<-100
+N<-nrow(data)
+folds<-sample(1:numFolds,N,rep=T)
+```
+
+```{r}
+#train test combo
+train.df  <- data[folds != 1,]
+test.df   <- data[folds == 1,]
+```
+
+```{r}
+#build the model and test mse 
+mod.cv  <- lm(`quality`~.,data=train.df)
+test.df$pred1 <- predict(mod.cv,newdata=test.df)  
+(mse.cv <- with(test.df,mean((`quality`-pred1)^2)))
+```
+
+```{r}
+#do for all folds
+mseKFold<-numeric(numFolds)
+for(fold in 1:numFolds){
+  train.df  <- data[folds != fold,]
+  test.df   <- data[folds == fold,]
+  mod.cv  <- lm(`quality`~.,data=train.df)
+  test.df$pred1 <- predict(mod.cv,newdata=test.df)  
+  mseKFold[fold] <- with(test.df,mean((`quality`-pred1)^2))
+}
+(mse.kfold <- mean(mseKFold))
+
+```
+
+The error here seems rather high, around .7 in my model.
+
+#knn now
+
+```{r}
+#define train data for knn.reg
+train.dat<-data[-(ncol(data))]
+resp<-with(data,`quality`)
+```
+
+```{r}
+#make model and test with 11 k nearest neighbors for training data
+kval <- 11
+mod.knn<-knn.reg(train.dat,train.dat,resp,kval)
+
+```
+
+```{r}
+#find the error with this
+pred<-mod.knn$pred
+with(data,mean((`quality`-pred)^2))
+```
+
+```{r}
+#define data once more for training and testing components
+N <- sample(1:nrow(train.dat), nrow(train.dat)/2, replace = FALSE)
+train <- train.dat[N,]
+test <- train.dat[-N,]
+resp_train <- with(data[N,], `quality`)
+resp_test <- with(data[-N,], `quality`)
+```
+
+```{r}
+#define range of kvals and evaluate knn.reg over them and find best mse
+kvals <- 2:100
+kval_err <- tibble(k = kvals, err = kvals)
+for(i in kvals){
+  mod.knn <- knn.reg(train, test, resp_train, i)
+  pred <- mod.knn$pred
+  kval_err[i-1, 2] = mean((resp_test-pred)^2)
+}
+```
+
+```{r}
+#find min mse and associate kval
+
+min_mse <- kval_err %>%
+  filter(err == min(err))
+
+best_k <- min_mse$k
+```
+
+```{r}
+mod.knn<-knn.reg(train,test,resp_train,best_k)
+mean((resp_test-mod.knn$pred)^2)
+```
+
+This is close to what the CV method has, though it is slightly lower

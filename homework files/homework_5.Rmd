@@ -1,0 +1,262 @@
+---
+title: "homework 5"
+author: "Nathan Kurtz-Enko"
+date: "2/26/2019"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache = TRUE)
+library(tidyverse)
+library(broom)
+library(dplyr)
+library(FNN)
+```
+
+##Assignment.
+For our scenario, define the function
+$$mse(a_0,a_1)=\frac{1}{N}\sum_{i=1}^N (y-(a_0+a_1x))^2$$
+Evaluate mse over a grid of values surrounding the values of
+b0= and b1 below. Show mse is mimimal at the coefficient
+values given by lm (slope and intercept below).
+
+```{r}
+#make our data
+
+b0 <- 1
+b1 <- 3
+
+N <- 50
+sigma <- 2
+
+x <- rnorm(N,0,1)
+y <- b0+b1*x+rnorm(N,0,sigma)
+data_tb <- tibble(x = x, y = y)
+```
+
+```{r}
+#find our intercept and slope of linear model with lowest mse
+mod1 <- lm(y~x, data = data_tb)
+coefficients1 <- mod1$coefficients
+min_intercept <- coefficients1[1]
+min_slope <- coefficients1[2]
+```
+
+```{r}
+#define tibble with info on grid values surrounding b0 and b1
+b0_grid <- seq(b0-1,b0+1,.1)
+b1_grid <- seq(b1-1,b1+1,.1)
+grid_tb <- tibble(intercept = b0_grid, slope = b1_grid, mse = 1:21)
+```
+
+```{r}
+#define mse function
+mse_function <- function(a0, a1){
+  mse <- mean((y-(a0+a1*x))^2)
+  mse
+}
+```
+
+```{r}
+#iterate over grid tibble
+
+for(i in 1:21){
+  a0 <- grid_tb$intercept[i]
+  a1 <- grid_tb$slope[i]
+  mse_result <- mse_function(a0,a1)
+  grid_tb[i,3] = mse_result
+}
+```
+
+```{r}
+#find slope and intercept associated with lowest mse and compare to that found with lm()
+grid_tb2 <- grid_tb %>%
+  filter(mse == min(mse)) %>%
+  dplyr::select(-mse) %>%
+  mutate(lm_min_intercept = min_intercept,
+         lm_min_slope = min_slope)
+
+grid_tb2
+```
+
+
+
+#Assignment: MSE comparison via bootstrapping
+In real life, we can't create M different train+test combos. But we
+can bootstrap. Using a single training set (e.g. a single data.df),
+bootstrap M times to estimate the MSE for both the linear model and
+loess. Is there any evidence that one algorithm is better than the other?
+
+
+
+Linear Model or Loess: Which one is better? How would we decide?
+Consider the the data set kidneyCASI.txt
+
+ *  *age* is age of volunteer
+ *  *tot* is composite kidney health score.
+
+
+```{r}
+#read in our dataset
+dataDir<-"~/ADM/class/"
+fileName<-"kidneyCASI.csv"
+
+kidney.df <- as.tibble(read.csv(file.path(dataDir,fileName)))
+ggplot(kidney.df)+
+  geom_point(aes(age,tot))+
+  geom_smooth(aes(age,tot), se = FALSE)
+```
+
+```{r}
+#test loess bootstrapping
+test1 <-loess(tot~age,span=0.8,data=kidney.df)
+predictions <- tibble(age = kidney.df$age, pred_tot = predict(test1,newdata=kidney.df))
+test_tb <- left_join(predictions, kidney.df) 
+nrow(test_tb)#why does this return so many rows, how can I fix this?
+```
+
+
+```{r}
+#define M bootstraps
+m <- 500
+n <- nrow(kidney.df)
+```
+
+```{r}
+#bootstraping using loess method
+mse_bootstrapping_loess <- tibble(mth_boot = 1:m, mse_loess = 1:m)
+
+for(i in 1:m){
+    bootSamp <- sample(1:n,n,rep=T)
+    boot.df <- kidney.df[bootSamp,]
+    mod.boot <-loess(tot~age,span=0.8,
+                     data=boot.df)
+    preds <-  predict(mod.boot,newdata=boot.df)
+    mse_bootstrapping_loess[i, 2] = mean(((boot.df$tot)-preds)^2)
+}
+```
+
+```{r}
+#bootstraping using lm method
+mse_bootstrapping_lm <- tibble(mth_boot = 1:m, mse_lm = 1:m)
+
+for(i in 1:m){
+  bootSamp <- sample(1:n, n, replace = TRUE)
+  boot.df <- kidney.df[bootSamp,]
+  mod.boot <- lm(tot~age,
+                 data = boot.df)
+  preds <- predict(mod.boot, newdata = boot.df)
+  mse_bootstrapping_lm[i, 2] = mean(((boot.df$tot)-preds)^2)
+}
+```
+
+```{r}
+#join together sets for comparison and plot
+mse_loess_vs_lm <- left_join(mse_bootstrapping_lm, mse_bootstrapping_loess)%>%
+  dplyr::select(-mth_boot)
+```
+
+```{r}
+#plot
+ggplot(mse_loess_vs_lm)+
+  geom_density(aes(mse_lm), fill = "red", alpha = .3)+
+  geom_density(aes(mse_loess), fill = "blue", alpha = .3)+
+  ggtitle("MSE: Loess(blue) vs Lm(red)")+
+  xlab("mse")
+```
+
+It appears that the method, Loess, has a slightly lower mse in terms of peak density. So, perhaps this is a better method for modelling. 
+
+```{r}
+mean_loess_mse <- mean(mse_loess_vs_lm$mse_loess)
+mean_lm_mse <- mean(mse_loess_vs_lm$mse_lm)
+
+mean_loess_mse < mean_lm_mse
+```
+
+# Assignment
+
+Assess the utility of both lm and loess (span=0.3 here) in terms of
+prediction. In particular, summarize the difference in predictions
+and the standard error of prediction for each algorithms. You can
+use bootstrapping for both algorithms, though for the lm, there are
+analytic formulas avaialbe. Are there
+any marked differences between these two algorithms?
+
+Use bootstrapping to estimate the MSE of each algorithm. Is there
+any reason to favor one method over the other based on MSE?
+
+Can you improve the performance (i.e., decrease MSE) by adding more
+"features"? In this case, this means adding higher powers of the
+input "age".
+One simply way to do this is simply to mutate the data frame by
+adding in the powers
+
+```{r}
+kidney.df2 <- kidney.df%>%
+    mutate(age2=age*age,
+           age3=age*age*age)
+
+```
+
+```{r, warning=FALSE}
+#bootstraping using loess method
+mse_bootstrapping_loess2 <- tibble(mth_boot = 1:m, mse_loess = 1:m, se = 1:m)
+
+for(i in 1:m){
+    bootSamp <- sample(1:n,n,rep=T)
+    boot.df <- kidney.df2[bootSamp,]
+    mod.boot <-loess(tot~age2,span=0.3,
+                     data=boot.df)
+    preds <-  predict(mod.boot,newdata=boot.df)
+    mse_bootstrapping_loess2[i, 2] = mean(((boot.df$tot)-preds)^2)
+    mse_bootstrapping_loess2[i, 3] = sd((summary(mod.boot))$residuals)/sqrt(n)
+}
+
+mean_se <- mean(mse_bootstrapping_loess2$se)
+mean_se
+```
+
+```{r}
+#bootstraping using lm method
+mse_bootstrapping_lm2 <- tibble(mth_boot = 1:m, mse_lm = 1:m, se = 1:m)
+
+for(i in 1:m){
+  bootSamp <- sample(1:n, n, replace = TRUE)
+  boot.df <- kidney.df2[bootSamp,]
+  mod.boot <- lm(tot~age2,
+                 data = boot.df)
+  preds <- predict(mod.boot, newdata = boot.df)
+  mse_bootstrapping_lm2[i, 2] = mean(((boot.df$tot)-preds)^2)
+  mse_bootstrapping_lm2[i, 3] = sd((summary(mod.boot))$residuals)/sqrt(n)
+}
+
+mean_se <- mean(mse_bootstrapping_lm2$se)
+mean_se
+```
+
+```{r}
+#join together sets for comparison and plot
+mse_loess_vs_lm2 <- left_join(mse_bootstrapping_lm2, mse_bootstrapping_loess2)%>%
+  dplyr::select(-mth_boot)
+```
+
+```{r}
+#plot
+ggplot(mse_loess_vs_lm)+
+  geom_density(aes(mse_lm), fill = "red", alpha = .3)+
+  geom_density(aes(mse_loess), fill = "blue", alpha = .3)+
+  ggtitle("MSE: Loess(blue) vs Lm(red)")+
+  xlab("mse")
+```
+
+```{r}
+mean(mse_loess_vs_lm2)
+```
+
+For the most part, it looks as if the mse is generally a bit lower using the Loess method than the Lm method. Also, the mean standard error of predictions residuals for the loess method is lower than the mean standard error of prediction residuals of the lm method. This seems to indicate that for the test data, our fit line more closely resembles the actual data when using the loess method. It seems that it would be better to use the loess method for more accurate predictions then.
+
+
+
+

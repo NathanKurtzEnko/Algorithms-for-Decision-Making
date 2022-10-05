@@ -1,0 +1,233 @@
+---
+title: "homework 10"
+author: "Nathan Kurtz-Enko"
+date: "3/25/2019"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache = TRUE)
+library(glmnet)
+library(tidyverse)
+library(stringr)
+library(tidyr)
+library(FNN)
+
+
+```
+This data set uses micro array data for 72 individuals
+some of whom had leukimia.  The response variable is discrete, hence this is a classification problem. Fortunately, GLMNET does classification as well as regression. For classification, you need to include the argument  **family="binomial"** as part of the glmmnet function call.
+
+Load the data and inspect dimensions
+```{r}
+load("Leukemia.RData")
+
+```
+
+
+We have n=72 samples and p=3571 predictors (!)
+```{r}
+xVals<-Leukemia$x
+dim(xVals)
+(numObserve <- nrow(xVals))
+```
+
+
+A summary of the outcomes
+```{r}
+yVals<-Leukemia$y
+table(yVals)
+```
+
+Create train and test data sets
+```{r}
+train.vals <- sample(1:numObserve,numObserve/2,rep=F)
+x.train <- xVals[train.vals,]
+y.train <- yVals[train.vals]
+
+```
+
+
+Table the training data
+```{r}
+table(y.train)
+```
+
+
+Make sure this looks ok.
+```{r}
+dim(x.train)
+```
+
+
+Test data....For later
+```{r}
+x.test <- xVals[-train.vals,]
+y.test <- yVals[-train.vals]
+
+dim(x.test)
+table(y.test)
+
+```
+
+
+
+#Step One: Try Logistic regression.
+Obvious problem: 
+Too many predictor variables approximately 3700!
+Note: Subset selection is out of the question
+
+
+Give logistic regression a shot
+```{r}
+train.df <- data.frame(x.train,y=y.train)
+mod.log <- glm(y.train~x.train,family="binomial")
+```
+
+```{r}
+test.df <- data.frame(x.test, y = y.test)
+pred <- predict(mod.log, data = test.df, type = "response")
+```
+
+```{r}
+mse <- mean((y.test-pred)^2)
+paste0(str_c("The error using logistic regression is ", mse))
+```
+
+
+
+How weell does this work? You will encounter some problems but you can still attempt a classification. 
+
+#Step Two: KNN
+Will KNN works any better? Give it a shot as a  point of comparison.
+
+```{r}
+kval_rng <- 2:50
+knn_mse <- tibble(k = kval_rng, err = kval_rng)
+for(k in kval_rng){
+  mod.knn <- knn(train.df, test.df, cl = y.train, k = k)
+  mse <- mean((y.test-as.numeric(mod.knn))^2)
+  knn_mse[k-1, 2] = mse
+}
+```
+
+
+```{r}
+knn_mse <- (filter(knn_mse, err == min(knn_mse$err)))[1,]
+
+mod.knn <- knn(train.df, test.df, cl = y.train, k = knn_mse$k)
+err <- mean((y.test-as.numeric(mod.knn))^2)
+paste0(str_c("The error using knn with nearest neighbors k=", knn_mse$k, " is ", err))
+```
+
+
+#Step Three: Ridge Regression
+Explore this over-determined model with ridge
+regression.
+
+Plan Use glmnet to perform classification (remember to use **family="binomial"**). Use  cross-validation  on the training to
+estimate error rates. Get the optimal lambda value and make a prediction on testing data.
+is.
+
+Remember: use alpha=0 for ridge regression.
+
+```{r}
+lambda.grid <- 10^seq(-3,1,length=100)
+cv.ridge <-
+    cv.glmnet(x.train,y.train,family = "binomial", alpha=0,intercept=F,lambda=lambda.grid)
+lambda.opt <- cv.ridge$lambda.min
+```
+
+```{r}
+mod.ridge <-
+    glmnet(x.train,y.train,family = "binomial", alpha=0,intercept=F,lambda=lambda.opt)
+
+pred.ridge.test <- predict(mod.ridge,newx=x.test, type = "response")
+mse.ridge.test <- mean((y.test-pred.ridge.test)^2)
+```
+
+```{r}
+paste0(str_c("The error with optimal penalization value lambda=", lambda.opt, " is ", mse.ridge.test))
+```
+
+
+
+#Step Four: Repeat with Lasso.
+Here we use alpha=1. Everything is similar
+How many coefficents are selected (i.e., how many non-zero coefficients)?
+
+```{r}
+lambda.grid <- 10^seq(-3,1,length=100)
+cv.lasso <-
+    cv.glmnet(x.train,y.train,family = "binomial", alpha=1,intercept=F,lambda=lambda.grid)
+lambda.opt <- cv.lasso$lambda.min
+```
+
+```{r}
+mod.lasso <-
+    glmnet(x.train,y.train,family = "binomial", alpha=1,intercept=F,lambda=lambda.opt)
+
+pred.lasso.test <- predict(mod.lasso,newx=x.test, type = "response")
+mse.lasso.test <- mean((y.test-pred.lasso.test)^2)
+
+
+```
+
+```{r}
+paste0(str_c("The Lasso error with optimal penalization value lambda=", lambda.opt, " is ", mse.ridge.test))
+```
+
+```{r}
+coef.lasso<- coef(mod.lasso)[-1,1] ##drop intercept
+num_non_zero <- sum(coef.lasso != 0)
+
+paste0(str_c("The number of coefficients selected by lasso out of 3751 is ", num_non_zero))
+```
+
+
+
+#Step Five: Subset selection
+Select the nonzero lasso coefficients and use these to build a
+a new logistic regression model. In this case, you should have
+a better chance of making predictions. How does this prediction
+compare with ridge and lasso?
+
+
+```{r}
+indices <- which(coef.lasso != 0)
+coefs <- coef.lasso[indices]
+
+leukx <- as.data.frame(Leukemia$x)
+
+xcols <- leukx[,indices]
+
+newdata <- data.frame(xcols, y = Leukemia$y)
+
+
+```
+
+
+```{r}
+sample<- nrow(newdata)
+indices <- sample(1:sample, sample/2, replace = FALSE)
+train <- newdata[indices,]
+test <- newdata[-indices,]
+```
+
+```{r}
+mod <- glm(y~., data = train, family = "binomial")
+pred <- predict(mod, data = test, type = "response" )
+
+mse <- mean((test$y-pred)^2)
+```
+
+```{r}
+paste0(str_c("The error using non-zero coefficients from Lasso is ", mse))
+```
+
+
+## Summary
+What did you see? How does ridge/lasso perform compared to logistic regression or KNN?
+
+Ridge and lasso are much better than knn and logistic regression. When the number of variables was reduced in logistic regression (step 5) the error did decrease but it was still not as low as ridge and lasso. Between ridge and lasso, it seems that lasso is a bit more effective.
