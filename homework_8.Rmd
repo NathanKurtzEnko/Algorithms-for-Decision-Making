@@ -1,0 +1,714 @@
+---
+title: "homework_8"
+author: "Nathan Kurtz-Enko"
+date: "3/8/2019"
+output: pdf_document
+---
+
+```{r, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(FNN)
+library(ggplot2)
+library(GGally)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,cache = TRUE)
+```
+#Build your own linear classifier
+Build your own classifier: Section 4.2 ESL (pages 103-104)
+Steps:
+
+ * Build an N x K matrix Y. Y_{n,l}=1 exactly when the
+n^{th} sample is in class k in {1,2,3}.
+
+ * Use ordinary linear regression to build K separate linear models
+f_k(x). f_k predicts the k^{th} column of Y.
+
+ * Classify x in class k_0 where k_0 is the index of the largest value f_k(x), k=1,2,...K .
+ 
+ * Build your own such a way that you can compare directly (and easily with lda, qda, or KNN.
+
+
+Standard libraries
+```{r, include=FALSE}
+library(MASS)
+library(tidyverse)
+library(class)
+
+```
+
+
+
+Build a simple model with  K=3 classes. Use multivariate normals
+with 3 different means. The choice of means is arbitrary.
+```{r}
+mu1 <- c(1,1)
+mu2 <- c(0,0)
+mu3 <- c(-2,1)
+
+```
+
+
+Covariance matrix
+This parameter will control the spread in the class sets
+```{r}
+ss <- 5
+```
+
+
+Thes parameters control for the "oblongness"...the more these differ, the more oblong the data are.
+```{r}
+s11 <- 1
+s22 <- 4
+S <- matrix(c(s11,0.5,0.5,s22),nrow=2)/ss
+
+
+```
+
+
+Number of sample points in each class and the total number of
+points.
+```{r}
+N1 <- N2 <- N3 <- 50
+N <- N1+N2+N3
+
+
+```
+
+
+Now....the data
+```{r}
+X1 <- mvrnorm(N1,mu1,S)
+X2 <- mvrnorm(N2,mu2,S)
+X3 <- mvrnorm(N3,mu3,S)
+X <- rbind(X1,X2,X3)
+```
+
+
+Put all the data into  a data frame.
+```{r}
+data.df <- data.frame(X,class=factor(c(rep(1,N1),
+                                rep(2,N2),
+                                rep(3,N3))))
+names(data.df)[1:2] <- c("x1","x2")
+
+
+```
+
+
+Here's what it looks like
+```{r}
+ggplot(data.df)+
+    geom_point(aes(x1,x2,color=class))+
+    ggtitle("Data with K=3 classes")
+
+```
+
+
+
+Now you are ready to apply the Linear Classifier ideas from ESL.
+First you need to build the matrix $Y$ and then build models on
+each response column. 
+
+For your classification scheme, generate a
+grid graph. As well, compare your classifcation to the the LDA
+classification. Any differences??
+
+Recall: Show classification regions on grid.
+Build a classification plot using LDA.
+
+```{r}
+mod.lda <- lda(class~x1+x2,data=data.df)
+str(mod.lda)
+
+```
+
+
+Make a plotting grid in x and y
+```{r}
+gridSize <- 25
+```
+
+
+Span the data
+```{r}
+x.vals0<-with(data.df,seq(min(x1),max(x1),length=gridSize))
+y.vals0<-with(data.df,seq(min(x2),max(x2),length=gridSize))
+
+grid.df <- expand.grid(x.vals0,y.vals0)
+names(grid.df) <- c("x1","x2")
+
+
+```
+
+
+Assign prediction values to the grid locations. This step depends
+on the prediction method.
+```{r}
+pred  <- predict(mod.lda,newdata=grid.df)
+grid.df$pred.lda <- pred$class
+
+```
+
+
+Take a peek...
+```{r}
+with(grid.df,table(pred.lda))
+
+```
+
+
+Make predictions for grid xy vals
+```{r}
+grid.gg <- ggplot()+
+  geom_point(data=data.df,aes(x1,x2,color=class),size=2)+
+    geom_tile(data=grid.df,aes(x1,x2,fill=factor(pred.lda)),
+              alpha=0.16)+
+    scale_fill_brewer(palette="Set1")+
+    scale_color_brewer(palette="Set1")+
+    coord_fixed()+
+    ggtitle("Linear Classification with LDA")+
+    guides(fill=F)
+grid.gg
+
+```
+#Now our own classifier
+```{r}
+#build Y
+#since we have 3 classes here Y = (Y_1, Y_2, Y_3)
+
+Y <- data.df %>%
+  mutate(y_1 = ifelse(class == 1, 1, 0),
+         y_2 = ifelse(class == 2, 1, 0),
+         y_3 = ifelse(class == 3, 1, 0))
+
+#build models
+mod1 <- lm(y_1~x1+x2, data = Y)
+mod2 <- lm(y_2~x1+x2, data = Y)
+mod3 <- lm(y_3~x1+x2, data = Y)
+
+#make predictions
+pred1 <- predict(mod1, newdata = grid.df)
+pred2 <- predict(mod2, newdata = grid.df)
+pred3 <- predict(mod3, newdata = grid.df)
+
+plot(pred1, (grid.df$x1)+(grid.df$x2))
+plot(pred2, (grid.df$x1)+(grid.df$x2))
+plot(pred3, (grid.df$x1)+(grid.df$x2))
+
+grid2.df <- grid.df %>%
+  mutate(pred1 = pred1,
+         pred2 = pred2,
+         pred3 = pred3,
+         pred_lm = 1:nrow(grid.df))
+
+for(i in 1:nrow(grid.df)){
+  class <- 0
+  if(grid2.df$pred1[i]>grid2.df$pred2[i] | grid2.df$pred1[i]>grid2.df$pred3[i]){
+    class <- 1
+  }
+  if(grid2.df$pred2[i]>grid2.df$pred1[i] | grid2.df$pred2[i]>grid2.df$pred3[i]){
+    class <- 2
+  }
+  if(grid2.df$pred3[i]>grid2.df$pred1[i] | grid2.df$pred3[i]>grid2.df$pred2[i]){
+    class <- 3
+  }
+  grid2.df$pred_lm[i] = class
+}
+
+
+#plot
+ggplot()+
+  geom_point(data=data.df,aes(x1,x2,color=class),size=2)+
+    geom_tile(data=grid2.df,aes(x1,x2,fill=factor(pred_lm)),
+              alpha=0.16)+
+    scale_fill_brewer(palette="Set1")+
+    scale_color_brewer(palette="Set1")+
+    coord_fixed()+
+    ggtitle("Linear Classification with own classifier")+
+    guides(fill=F)
+```
+
+#try things a different way
+
+Approach 2 (second half of ESL page 104). Treat classes as
+quantitative values and build a linear model prediction
+model. Classification a new point be assigning to the closest value in the set $1,2,\dots K$.
+
+The claim is that this is identical to the previous
+approach. Provide compelling computational evidences for this
+claim.
+
+#observations
+
+```{r}
+#find mse for each model we made and the min of that will be our classification
+grid3.df <- grid2.df %>%
+  mutate(mse1 = 1:nrow(grid2.df),
+         mse2 = 1:nrow(grid2.df),
+         mse3 = 1:nrow(grid2.df),
+         approach2_pred = 1:nrow(grid2.df))
+
+for(i in 1:nrow(grid2.df)){
+  grid3.df$mse1[i] = mean((1-grid3.df$pred1[i])^2)
+  grid3.df$mse2[i] = mean((1-grid3.df$pred2[i])^2)
+  grid3.df$mse3[i] = mean((1-grid3.df$pred3[i])^2)
+  class <- 0
+  if(grid3.df$mse1[i]<grid3.df$mse2[i] | grid3.df$mse1[i]<grid3.df$mse3[i]){
+    class <- 1
+  }
+  if(grid3.df$mse2[i]<grid3.df$mse1[i] | grid3.df$mse2[i]<grid3.df$mse3[i]){
+    class <- 2
+  }
+  if(grid3.df$mse3[i]<grid3.df$mse1[i] | grid3.df$mse3[i]<grid3.df$mse2[i]){
+    class <- 3
+  }
+  grid3.df$approach2_pred[i] = class
+}
+
+
+error_app1_app2 <- mean(grid3.df$approach2_pred != grid3.df$pred_lm)
+paste0(str_c("The error between our first approach and second is: ", error_app1_app2))
+```
+
+The fact that there is no error between our approaches means that both methods have the same exact results which suggests that they are doing the same thing essentially.
+
+
+
+Figure 4.2 (page 105) compares this simplistic linear
+classification to LDA. In this case, there are three classes that
+are completely separate. Create a synthetic scenario that
+reproduces the situation illustrated in Figure 4.2.
+
+```{r}
+coeff1 <- mod1$coefficients
+coeff2 <- mod2$coefficients
+coeff3 <- mod3$coefficients
+
+ggplot()+
+  geom_point(data=data.df,aes(x1,x2,color=class),size=2)+
+  scale_color_brewer(palette="Set1")+
+  coord_fixed()+
+  ggtitle("fig 4.2 recreation")+
+  geom_abline(intercept=-coeff3[1]/coeff3[3],
+                slope=-coeff3[2]/coeff3[3],size=2)
+```
+
+
+Take a shot at Figure 4.3.
+
+```{r}
+ggplot()+
+  geom_point(data = mod1, mapping = aes(x = mod1$fitted.values, y = (mod1$fitted.values)), color = "blue")+
+  geom_rug(data = mod1, mapping= aes(x = mod1$fitted.values), sides = "b", color = "blue")+
+  geom_point(data = mod2, mapping = aes(x = mod2$fitted.values, y = 0), color = "orange")+
+  geom_rug(data = mod1, mapping= aes(x = mod2$fitted.values), sides = "b", color = "orange")+
+  geom_point(data = mod2, mapping = aes(x = mod3$fitted.values, y = -1*(mod3$fitted.values)), color = "green")+
+  geom_rug(data = mod1, mapping= aes(x = mod3$fitted.values), sides = "b", color = "green")+
+  ggtitle("fig 4.3 recreation attempt")
+```
+
+
+
+# Nonlinear classification.
+There is train and test data in the files. Again, we are looking at
+K=3 classes.
+
+* NonlinearDataTrain.csv
+* NonlinearDataTest.csv
+
+Use the training data to build one or more models to classify this data. Feel free to use KNN, LDA, or QDA. 
+
+As defined,  Logistic Regression only
+only works for two classes. Can you modify it to make predictions
+on the classes?
+
+Which model works best on the test data?
+#logistic regression
+```{r}
+library(nnet)
+data.df <- read.csv("~/ADM/class/NonlinearDataTrain.csv")
+test.df <- read.csv("~/ADM/class/NonlinearDataTest.csv")
+#head(data.df)
+mod.log <- multinom(cat ~ x1+x2, data=data.df)
+preds <- predict(mod.log, newdata = test.df)
+test2.df <- test.df %>%
+  mutate(pred = preds)
+
+error_log_reg <- mean(test2.df$cat != test2.df$pred)
+paste0("The error rate of logistic regression here is: ", error_log_reg)
+```
+
+```{r}
+ggplot(test.df)+
+  geom_point(aes(x = x1, y = x2, color = factor(cat)))+
+  ggtitle("Actual category by inputs x1 and x2")
+
+ggplot(test2.df)+
+  geom_bar(aes(x = factor(cat), fill = factor(pred)))+
+  ggtitle("Predicted cat via Log Reg by actual category")
+```
+
+#Linear discrimant analysis
+
+```{r}
+#try lda method now
+
+mod.lda2 <- lda(cat~x1+x2, data = data.df)
+preds <- predict(mod.lda2, newdata = test.df)
+test3.df <- test.df %>%
+  mutate(pred = preds$class)
+
+error_lda <- mean(test3.df$cat != test3.df$pred)
+paste0("The error rate using LDA is: ", error_lda)
+
+ggplot(test3.df)+
+  geom_bar(aes(x = factor(cat), fill = factor(pred)))+
+  ggtitle("Predicted cat via LDA by actual cat")
+```
+#quadratic discriminant analysis
+
+```{r}
+#try qda
+
+mod.qda <- qda(cat~x1+x2, data = data.df)
+pred9 <- predict(mod.qda, newdata = test.df)
+pred_act <- pred9$class
+test4.df <- test.df %>%
+  mutate(pred = 1:length(pred_act))
+
+for(i in 1:length(pred_act)){
+  test4.df$pred[i] = pred_act[i]
+}
+
+ggplot(data = test4.df)+
+  geom_bar(aes(x = cat, fill = factor(pred)))+
+  ggtitle("predicted cat via QDA by actual cat")
+
+error_qda <- mean(test4.df$cat != test4.df$pred)
+paste0("The error with QDA is: ", error_qda)
+```
+
+#Observations
+it appears that QDA has the lowest error and that log reg and lda are about equivalent in efficacy in predictions. So perhaps QDA is the best method so far when making catagorical predictions
+
+#Olive Oil stuff
+
+```{r}
+olive <- read_csv("~/ADM/class/OliveOilData.csv") %>%
+  dplyr::select(-Area)
+
+n0 <- nrow(olive)
+train <- sample(1:n0,n0/2,rep=F)
+train.df <- olive[train,]
+test.df <- olive[-train,]
+```
+##build lda model 
+
+```{r}
+## Build the LDA model using all the predictors
+mod.lda<-lda(Region ~ . , data=train.df)
+
+##better than summary(mod.lda)
+mod.lda
+
+
+## Predict on the test data.
+lda.pred<-predict(mod.lda,newdata=test.df)
+
+test.df<- test.df %>%
+  mutate(pred=lda.pred$class)
+
+X<-data.matrix(test.df[,2:9])
+
+Wvec<-mod.lda$scaling
+
+s1 <- sum(Wvec[,1]^2)
+s2 <- sum(Wvec[,2]^2)
+Wvec[,1] <- Wvec[,1]/s1
+Wvec[,2] <- Wvec[,2]/s2
+
+X.trans<-X %*% Wvec
+dim(X.trans)
+
+testTrans.df<-data.frame(Region=factor(test.df$Region),
+                          LDA1=X.trans[,1],
+                          LDA2=X.trans[,2])
+```
+
+```{r}
+ggplot(testTrans.df,aes(LDA1,LDA2,color=Region))+
+  geom_point()+
+  scale_color_manual(values=c("red","blue","orange"))+
+  ggtitle("separations of regions by LDA1 and LDA2")
+```
+
+
+```{r}
+####do lda again....
+mod.lda2<-lda(Region~LDA1+LDA2,data=testTrans.df)
+lda.pred2<-predict(mod.lda2,data=testTrans.df)
+
+##posterior probabilities
+probs<-lda.pred2$posterior
+head(probs)
+
+## make a plotting grid in x and y
+GS <- 100
+x.vals0<-with(testTrans.df,seq(min(LDA1),max(LDA1),length=GS))
+y.vals0<-with(testTrans.df,seq(min(LDA2),max(LDA2),length=GS))
+grid.df <- expand.grid(x.vals0,y.vals0)
+names(grid.df) <- c("LDA1","LDA2")
+
+###make predictions for grid xy vals
+grid.lda <- predict(mod.lda2,newdata=grid.df)
+
+grid.df <- grid.df%>%
+                  mutate(Region =grid.lda$class)
+
+
+##plot the grid values versus the original values
+grid.gg <- ggplot()+
+    geom_point(data=testTrans.df,aes(LDA1,LDA2,color=Region),size=2)+
+    geom_tile(data=grid.df,aes(LDA1,LDA2,fill=Region),alpha=0.2)+
+    scale_color_manual(values=c("red","blue","brown"))+
+    scale_fill_manual(values=c("red","blue","brown"))+
+    ggtitle("LDA")
+grid.gg
+
+```
+
+## Assignment....
+## What is the smallest set of predictors for the Olive Oil data set
+## that results in a perfect separation of the classes in the LDA
+## space?
+```{r}
+library(GGally)
+ggpairs(olive)
+```
+
+```{r}
+mod.lda<-lda(Region ~ Palmitoleic+Stearic+Linoleic+Linolenic+Arachidic+Eicosenoic , data=train.df)
+
+##better than summary(mod.lda)
+mod.lda
+
+
+## Predict on the test data.
+lda.pred<-predict(mod.lda,newdata=test.df)
+
+test.df<- test.df %>%
+  mutate(pred=lda.pred$class)
+
+X<-data.matrix(test.df[,c(3,4,6,7,8,9)])
+
+Wvec<-mod.lda$scaling
+
+s1 <- sum(Wvec[,1]^2)
+s2 <- sum(Wvec[,2]^2)
+Wvec[,1] <- Wvec[,1]/s1
+Wvec[,2] <- Wvec[,2]/s2
+
+X.trans<-X %*% Wvec
+dim(X.trans)
+
+testTrans.df<-data.frame(Region=factor(test.df$Region),
+                          LDA1=X.trans[,1],
+                          LDA2=X.trans[,2])
+```
+
+```{r}
+ggplot(testTrans.df,aes(LDA1,LDA2,color=Region))+
+  geom_point()+
+  scale_color_manual(values=c("red","blue","orange"))+
+  ggtitle("Olive oil lda with smallest number of predictors")
+```
+
+##observations
+
+For me, I was able to achieve nearly perfect seperation with using 6 inputs
+
+#######################################################
+## Assignment....
+
+## Iris Data Set
+#######################################################
+## Analyze the Iris data
+
+#######################################################
+## Predict the Species (setosa, versicolor, virginica) using the
+## other values. Break into train and test.
+##How good of job does LDA  do? How well can you separate the species
+## (test data)
+## when you project into the LDA space (spanned by the two scaling vectors)
+## Create the nice graphic, include the centroids of each class
+## cluster in the LDA space
+## Compare with KNN.
+
+#first lda
+```{r}
+n <- nrow(iris)
+train <- sample(1:n, n/2, replace = FALSE)
+train.df <- iris[train,]
+test.df <- iris[-train,]
+
+mod.lda <- lda(Species ~., data = train.df)
+pred <- predict(mod.lda, newdata = test.df)
+
+test2.df <- test.df %>%
+  mutate(pred = pred$class)
+
+X<-data.matrix(test.df[,1:4])
+
+Wvec<-mod.lda$scaling
+
+s1 <- sum(Wvec[,1]^2)
+s2 <- sum(Wvec[,2]^2)
+Wvec[,1] <- Wvec[,1]/s1
+Wvec[,2] <- Wvec[,2]/s2
+
+X.trans<-X %*% Wvec
+dim(X.trans)
+
+testTrans.df<-data.frame(Species=factor(test.df$Species),
+                          LDA1=X.trans[,1],
+                          LDA2=X.trans[,2])
+
+testTrans2.df <- testTrans.df %>%
+  group_by(Species)%>%
+  summarize(mean_LDA1 = mean(LDA1),
+            mean_LDA2 = mean(LDA2))
+
+ggplot()+
+  geom_point(data = testTrans.df, mapping = aes(x = LDA1, y = LDA2, color=Species))+
+  geom_point(data = testTrans2.df, mapping = aes(x = mean_LDA1, y = mean_LDA2), size = 4, alpha = .3)+
+  scale_color_manual(values=c("red","blue","orange"))+
+  ggtitle("Species separation with center point")
+
+error <- mean(test2.df$Species != test2.df$pred)
+paste0("The error rate using LDA is: ", error)
+```
+#now knn
+```{r}
+#try KNN
+iris0 <- scale(iris[,-5])
+iris.df <- data.frame(iris0, Species = iris$Species)
+n <- nrow(iris.df)
+train <- sample(1:n, n/2, replace = FALSE)
+train.df <- iris.df[train,]
+test.df <- iris.df[-train,]
+train.dat <- train.df[,1:4]
+test.dat <- test.df[,1:4]
+classes <- with(train.df, Species)
+
+k_rng <- 1:20
+errors <- tibble(k = k_rng, error = k_rng)
+
+for(i in k_rng){
+  mod.knn <- knn(train.dat, test.dat, classes, k = i)
+  err <- mean(test.df$Species != mod.knn)
+  errors[i, 2] = err
+}
+
+min_err <- min(errors$error)
+
+best_k_tib <- errors %>%
+  filter(error == min_err)
+
+best_k <- best_k_tib$k[length(best_k_tib$k)]
+
+mod.knn <- knn(train.dat, test.dat, classes, best_k)
+test2.df <- test.df %>%
+  mutate(pred = mod.knn)
+
+ggplot(test2.df)+
+  geom_bar(aes(x = Species, fill = pred))
+
+err<- mean(test2.df$Species != mod.knn)
+paste0("The Error when using KNN and best value for K is : ", err)
+```
+##observations
+
+KNN is good in some instances but LDA is best in terms of lowest error rate here so perhaps it is a better method for small data sets like this one. Otherwise it could simply be a superior method
+
+#######################################################
+## Assignment...find your own data set for lassification. Analyize
+## with KNN, logistic  regression, and LDA.
+## If you want try QDA (quadratic discriminate analysis).
+## How well can you do??
+
+#using flea data set
+#starting out with KNN
+```{r}
+#knn
+data <- flea
+
+n <- nrow(data)
+train <- sample(1:n, n/2, replace = FALSE)
+train.df <- data[train,]
+test.df <- data[-train,]
+train.dat <- train.df[, -1]
+test.dat <- test.df[, -1]
+classes <- train.df[, 1]
+
+k_rng <- 1:20
+errors <- tibble(k = k_rng, error = k_rng)
+
+for(i in k_rng){
+  mod.knn <- knn(train.dat, test.dat, classes, k = i)
+  err <- mean(test.df$species != mod.knn)
+  errors[i, 2] = err
+}
+
+min_err <- min(errors$error)
+
+best_k_tib <- errors %>%
+  filter(error == min_err)
+
+best_k <- best_k_tib$k[length(best_k_tib$k)]
+
+mod.knn <- knn(train.dat, test.dat, classes, best_k)
+test2.df <- test.df %>%
+  mutate(pred = mod.knn)
+
+ggplot(test2.df)+
+  geom_bar(aes(x = species, fill = pred))
+
+err<- mean(test2.df$species != mod.knn)
+paste0("The Error when using KNN and best value for K is : ", err)
+```
+#log reg
+
+```{r}
+#logistic regression
+mod.log <- multinom(species ~ ., data=train.df)
+preds <- predict(mod.log, newdata = test.df)
+test2.df <- test.df %>%
+  mutate(pred = preds)
+
+error_log_reg <- mean(test2.df$species != test2.df$pred)
+paste0("The error rate of logistic regression here is: ", error_log_reg)
+
+ggplot(test2.df)+
+  geom_bar(aes(x = factor(species), fill = factor(pred)))
+```
+#lda
+
+```{r}
+#try lda method now
+
+mod.lda <- lda(species~., data = train.df)
+preds <- predict(mod.lda, newdata = test.df)
+test2.df <- test.df %>%
+  mutate(pred = preds$class)
+
+error_lda <- mean(test2.df$species != test2.df$pred)
+paste0("The error rate using LDA is: ", error_lda)
+
+ggplot(test2.df)+
+  geom_bar(aes(x = factor(species), fill = factor(pred)))
+```
+##observations
+LDA and KNN seem to work really well in this instance, though it seems like lda is better here corroborates some earlier ideas

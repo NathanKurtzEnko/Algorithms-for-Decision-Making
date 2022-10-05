@@ -1,0 +1,253 @@
+---
+title: "Homework 18"
+author: "Nathan Kurtz-Enko"
+date: "4/25/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+suppressMessages(library(tidyverse))
+suppressMessages(library(factoextra))
+suppressMessages(library(ggrepel))
+suppressMessages(library(MASS))
+library(cluster)
+```
+
+#Assignment: Clustering on county_facts.csv
+
+```{r}
+county_facts.df <- read_csv("/home/rstudio/users/kurtze1/ADM/class/county_facts.csv")
+
+#clean data
+county_facts.df <- county_facts.df%>%
+    ##only keep reasonable sized counties
+    filter(PST045214>10)%>%
+    ##extra population values
+    dplyr::select(-PST040210,-PST120214,-POP010210)%>%
+    ##drop out area, we don't care about this
+    dplyr::select(-LND110210)%>%
+    ##total retail, instead just use per capita value
+    dplyr::select(-RTN130207)%>%
+    dplyr::select(-area_name) %>% 
+    ##Change other total fields to  per capita
+    mutate(BZA010213=BZA010213/PST045214,
+           BZA110213=BZA110213/PST045214,
+           NES010213=NES010213/PST045214,
+           SBO001207=SBO001207/PST045214,
+           MAN450207=MAN450207/PST045214,
+           WTN220207=WTN220207/PST045214,
+           AFN120207=AFN120207/PST045214,
+           BPS030214=BPS030214/PST045214)
+
+#remove NA values
+county_facts.df <- na.omit(county_facts.df)
+
+#scale data
+county_facts_stuff <- scale(county_facts.df[, 3:ncol(county_facts.df)])
+county_facts.df <- cbind(county_facts.df[1:2], county_facts_stuff)
+```
+
+
+```{r, warning=FALSE}
+K <- 3 
+mod.km <- kmeans(county_facts_stuff,K,nstart=25)
+county_facts.df$cluster <- factor(mod.km$cluster)
+
+fviz_cluster(mod.km,data=county_facts_stuff)
+
+sil <- silhouette(mod.km$cluster,get_dist(county_facts_stuff))
+
+avg_si <- function(k) {
+  mod.km<- kmeans(county_facts_stuff, centers = k, nstart = 25)
+  ss <- silhouette(mod.km$cluster, get_dist(county_facts_stuff))
+  mean(ss[, 3])
+}
+
+k.values <- 2:15
+
+
+avg_si_vals <- map_dbl(k.values, avg_si)
+
+data.frame(k=k.values,si=avg_si_vals)%>%
+    ggplot()+
+    geom_point(aes(k,si))+
+    geom_line(aes(k,si))+
+    scale_x_continuous(breaks=k.values)+
+    ggtitle("Average silhoutte values")
+```
+
+
+#Assigment: Prediction with Eigenfaces
+Does prediction into the dog or cat eigenface reliability
+predict if an images is a dog or a cat? That is, for faces not in
+the training sets, does the quality of the reconstruction indicate
+"catness" versus "dogness"?
+
+Plan: for a dog (or cat) reconstruct with both the eigenCats and eigenDogs. Which is "closer" to the original. Does closeness predict the category (cat vs dog) well?
+
+Things to consider
+
+ * What is the minimal number of eigenfaces needed to reliability
+predict cat vs dog? Extreme case: can you use the just first eigenface?
+ * In the dog set, which dog is most like a cat? Which dog is the
+least like a cat? How about cats like/unlike dogs?
+ * In the human face is it more like a cat or a dog? Do the whiskers change things?
+ 
+ * Use your own face image. Are you more like a cat or a dog? Note: Use *readJPG.R* to convert a jpeg image to a form suitable for this process.
+ 
+```{r}
+catsAll <- read.csv("~/ADM/class/cats.csv",header=F)
+dogsAll <- read.csv("~/ADM/class/dogs.csv",header=F)
+facesAll <- read.csv("~/ADM/class/face.csv",header=F)
+
+library(jpeg)
+
+fig <- readJPEG("/home/rstudio/users/kurtze1/ADM/homework/IMG_1326.jpg")
+mpr <- t(255*fig[,,1])
+image(mpr,col=grey.colors(256))
+mprFlat <- matrix(t(mpr),nrow=64^2)
+write.csv(mprFlat,"mpr.csv",row.names=F)
+
+```
+
+```{r}
+cats <- catsAll[,1:90]
+catsOther <- catsAll[,91:99]
+dogs <- dogsAll[,1:90]
+dogsOther <- dogsAll[,91:99]
+```
+
+```{r}
+imageConv <- function(inCat){
+    matrix(inCat,nrow=64,byrow=T)    
+}
+flatConv <- function(inCat){
+    matrix(t(inCat),nrow=64^2,ncol=1)[,1]
+}
+```
+
+```{r}
+meanCats <- colMeans(cats)
+meanDogs <- colMeans(dogs)
+
+meanCatMat <- matrix(rep(meanCats,each=4096),nrow=4096)
+meanDogMat <- matrix(rep(meanDogs,each=4096),nrow=4096)
+```
+ 
+```{r}
+cat.svd <- svd(cats)
+dog.svd <- svd(dogs)
+```
+
+```{r}
+U.cat <- cat.svd$u
+D.cat <- cat.svd$d
+V.cat <- cat.svd$v
+
+U.dog <- dog.svd$u
+D.dog <- dog.svd$d
+V.dog <- dog.svd$v
+```
+ 
+```{r}
+CatCat <- function(){
+  num <- 5
+  samp <- sample(1:9,num,rep=F)
+  catHats <- matrix(nrow=4096,ncol=num)
+  for(i in 1:num){
+      catHats[,i] <- U.cat%*%t(U.cat)%*%catsOther[,i]
+  }
+  newOrd <- sample(1:num,num,rep=F)
+  op <- par(mfrow=c(2,num))
+  for(i in 1:num){
+      image(imageConv(catsOther[,i]),col=grey.colors(256))
+  }
+  for(i in 1:num){
+      image(imageConv(catHats[,newOrd[i]]),col=grey.colors(256))
+  }
+  par(op)
+}
+
+
+DogDog <- function(){
+  num <- 5
+  samp <- sample(1:9,num,rep=F)
+  dogHats <- matrix(nrow=4096,ncol=num)
+  for(i in 1:num){
+      dogHats[,i] <- U.dog%*%t(U.dog)%*%dogsOther[,i]
+  }
+  newOrd <- sample(1:num,num,rep=F)
+  op <- par(mfrow=c(2,num))
+  for(i in 1:num){
+      image(imageConv(dogsOther[,i]),col=grey.colors(256))
+  }
+  for(i in 1:num){
+      image(imageConv(dogHats[,newOrd[i]]),col=grey.colors(256))
+  }
+  par(op)
+}
+
+
+DogCat <- function(){
+  num <- 5
+  samp <- sample(1:9,num,rep=F)
+  dogcatHats <- matrix(nrow=4096,ncol=num)
+  for(i in 1:num){
+      dogcatHats[,i] <- U.dog%*%t(U.dog)%*%catsOther[,i]
+  }
+  newOrd <- sample(1:num,num,rep=F)
+  op <- par(mfrow=c(2,num))
+  for(i in 1:num){
+      image(imageConv(catsOther[,i]),col=grey.colors(256))
+  }
+  for(i in 1:num){
+      image(imageConv(dogcatHats[,newOrd[i]]),col=grey.colors(256))
+  }
+  par(op)
+}
+
+CatDog <- function(){
+  num <- 5
+  samp <- sample(1:9,num,rep=F)
+  catdogHats <- matrix(nrow=4096,ncol=num)
+  for(i in 1:num){
+      catdogHats[,i] <- U.cat%*%t(U.cat)%*%dogsOther[,i]
+  }
+  newOrd <- sample(1:num,num,rep=F)
+  op <- par(mfrow=c(2,num))
+  for(i in 1:num){
+      image(imageConv(dogsOther[,i]),col=grey.colors(256))
+  }
+  for(i in 1:num){
+      image(imageConv(catdogHats[,newOrd[i]]),col=grey.colors(256))
+  }
+  par(op)
+}
+```
+ 
+```{r}
+CatCat()
+DogCat()
+
+DogDog()
+CatDog()
+```
+ 
+
+
+ Both the DogCat() and CatDog() functions do an awful job of predicting faces. However, if I had to choose, the better of the two would be DogCat(), using dog eigen faces to predict cat faces. But it is far superior to simply use cat eigen faces to predict cat faces and the same goes for dog faces.
+ 
+ 
+```{r}
+#mpr.csv <- read_csv("mpr.csv")
+#image(imageConv(as.matrix(mpr.csv)),col=grey.colors(256))
+#aDogHat <- U.dog%*%t(U.dog)%*%as.matrix(mpr.csv)
+#image(imageConv(aDogHat),col=grey.colors(256))
+
+#aCatHat <- U.cat%*%t(U.cat)%*%as.matrix(mpr.csv)
+#image(imageConv(aCatHat), col = grey.colors(256))
+```
+ 
+ 
