@@ -1,0 +1,873 @@
+---
+title: "4-23-19"
+author: "Nathan Kurtz-Enko"
+date: "4/23/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache = TRUE)
+```
+#Introduction to Kmeans Clustering (and PCA)
+
+The usual libraries. You will probabilty need to install the factoextra package.
+```{r}
+suppressMessages(library(tidyverse))
+suppressMessages(library(MASS))
+```
+
+
+You might have to install factoextra: install.packages("factoextra")
+```{r}
+suppressMessages(library(factoextra))
+
+```
+
+
+
+The basic idea behind kmeans clustering is that we want to find
+k clusters centered around centroids.
+A good clustering is one which can't be locally improved by a
+sequence of centroid forming and grouping around the centroids. We
+will illustrate this below.
+
+
+##Generate some data for K=3 clusters
+Of course, in practice you don't know how many clusters there are.
+Build the data with 
+```{r}
+N <- 40
+maxK<- 6
+sd0 <- 3
+
+```
+
+
+Use the multivariate normal distribution to put points into the k
+classes. Note that if the standard deviation is large, these
+clusters will overlap.
+
+Centers for the clusters
+```{r}
+mu <- matrix(runif(2*maxK,-3,3),nrow=2,ncol=maxK)
+dat <- matrix(nrow=maxK*N,ncol=2)
+for(i in 1:maxK){
+    dat[(N*(i-1)+1):(N*i),] <- mvrnorm(N,mu[,i],diag(c(1,1)*sd0))
+}
+dim(dat)
+
+```
+
+
+
+Pack everything into a data structure.
+```{r}
+(clusterLabels <- factor(LETTERS))
+
+```
+
+
+Use 3 means for demo purposes
+```{r}
+K <- 3
+(theseClusters <- clusterLabels[1:K])
+data.df <-
+    data.frame(x=dat[,1],
+               y=dat[,2],
+               cluster.orig = rep(clusterLabels[1:maxK],each=N)) %>% 
+    filter(cluster.orig %in% theseClusters) %>%
+    droplevels()
+
+```
+
+
+checking..
+```{r}
+nrow(data.df)
+
+```
+
+
+...and plot it. In practice, you don't see this information!
+```{r}
+gg.orig <- data.df %>% 
+    ggplot()+
+    geom_point(aes(x,y,color=cluster.orig),size=2)+
+    guides(color=F)+
+    ggtitle("Original Clusters")
+gg.orig
+
+```
+
+
+##Implementing the kmeans algorithm.
+It's a two-step process
+
+ * Given a clustering, find the centroids of the clusters.
+ * For each centroid, identify the observations closest to this
+centroid. These form a cluster.
+
+
+assign random clusters
+```{r}
+data.df$cluster <- sample(theseClusters,nrow(data.df),rep=T)
+
+
+```
+
+
+Compute the centroids of each cluster
+```{r}
+data.df <- data.df %>%
+    group_by(cluster) %>% 
+    mutate(centX = mean(x),
+           centY = mean(y))
+
+```
+
+
+Pull off the centroids
+```{r}
+centroids.df <- data.df %>%
+    group_by(cluster) %>%
+    summarize(x=mean(x),
+              y=mean(y),
+              cluster0=unique(cluster))
+
+
+```
+
+
+How does it look in the random clustering?
+```{r}
+ggplot(data.df,aes(x,y,color=cluster))+
+    geom_point(size=2)+
+    geom_point(data=centroids.df,aes(x,y,color=cluster0),size=5)+
+    geom_point(data=centroids.df,aes(x,y),color="black",size=2)+
+    ggtitle("Random Clusters")
+
+
+
+```
+
+
+Start the iteration of the K-means clustering with K means
+Step 1: compute the nearest centroid
+```{r}
+nearestCentroid <- function(pt,centers.df){
+    centers.df %>%
+        group_by(cluster) %>%
+        mutate(d= sum((c(x,y) - pt)^2)) %>%
+        with(LETTERS[which.min(d)])
+}
+
+nearestCentroid(c(-6,-6),centroids.df)
+nearestCentroid(c(6,6),centroids.df)
+nearestCentroid(c(-6,6),centroids.df)
+
+ 
+```
+
+
+Determine the nearest centroid for each point in the data frame
+```{r}
+data.df <- data.df %>% 
+    rowwise() %>%
+    ##this determines the nearest
+    mutate(cluster=nearestCentroid(c(x,y),centroids.df)) %>% 
+    #group_by(cluster)
+
+
+```
+
+
+pull of the centroids
+Pull off the centroids
+
+```{r}
+centroids.df <- data.df %>%
+    group_by(cluster) %>%
+    summarize(x=mean(x),
+              y=mean(y),
+              cluster0=unique(cluster))
+
+```
+
+
+How does it look now
+How does it look in the random clustering?
+```{r}
+ggplot(data.df,aes(x,y,color=cluster))+
+    geom_point(size=2)+
+    geom_point(data=centroids.df,aes(x,y,color=cluster0),size=5)+
+    geom_point(data=centroids.df,aes(x,y),color="black",size=2)+
+    ggtitle("New Clusters")
+    
+
+
+
+```
+
+
+compare with original clustering
+```{r}
+with(data.df,table(cluster.orig,cluster))
+
+
+
+```
+
+
+Repeat this process. At each step, cluster around nearest
+centroid. Then compute the centroids of the new
+clusters.
+```{r}
+doCluster <- function(){
+    ##centroids
+    centroids.df <- data.df %>%
+        group_by(cluster) %>%
+        summarize(x=mean(x),
+                  y=mean(y),
+                  cluster0=unique(cluster))
+    ##plot...
+    gg <- ggplot(data.df,aes(x,y,color=cluster))+
+        geom_point(size=2)+
+        geom_point(data=centroids.df,aes(x,y,color=cluster0),size=5)+
+        geom_point(data=centroids.df,aes(x,y),color="black",size=2)+
+        guides(color=F)
+    ##Note the <<- this means modify a global variable, in this case data.df
+    data.df <<- data.df %>% 
+        rowwise %>%
+        mutate(cluster=nearestCentroid(c(x,y),centroids.df))
+    gg
+}
+
+
+```
+
+
+Start Over: assign random clusters
+```{r}
+
+data.df$cluster <- sample(theseClusters,nrow(data.df),rep=T)
+ggs <- list()
+for(m in 1:6)
+    ggs[[m]] <- doCluster()
+
+library(gridExtra)
+grid.arrange(grobs=ggs,nrow=2)
+
+```
+
+
+How does this compare to the original clusters (unknown in practice)
+```{r}
+with(data.df,table(cluster,cluster.orig))
+
+
+```
+
+
+Generally, the algorithm continues until the centroids are stable
+```{r}
+data.df$cluster <- sample(theseClusters,nrow(data.df),rep=T)
+centroids.df0 <- data.df %>%
+    group_by(cluster) %>%
+    summarize(x=mean(x),
+              y=mean(y),
+                  cluster0=unique(cluster))
+M <- 10
+for(m in 1:M){
+    doCluster()
+    centroids.df1 <- data.df %>%
+        group_by(cluster) %>%
+        summarize(x=mean(x),
+                  y=mean(y),
+                  cluster0=unique(cluster))
+    dd <- centroids.df0[c("x","y")]-centroids.df1[c("x","y")]
+    ##compute distance between subsequent 
+    totDist <- 0
+    for(k in 1:K){
+        totDist <- totDist+sum(dd[k,]^2)
+    }
+    centroids.df0 <- centroids.df1
+    print(sprintf("Distance between centroids %s",totDist))
+}
+doCluster()
+
+with(data.df,table(cluster,cluster.orig))
+
+```
+
+
+
+#Using R kmeans
+
+in final clustering due to original starting clusters. It reports
+the best of the nstart different clusterings (best meaning smallest
+Within Sum of Squares...more on this later)
+The parameter nstart refers to how many trials to run to account
+for differences.
+Also, since kmeans uses distances, the data should be
+normalized/scaled before using.
+
+```{r}
+K
+```
+
+
+using data.df[c("x","y"0] since we only are clustering on x,y values
+```{r}
+mod.km <- kmeans(data.df[c("x","y")],centers=K,nstart=25)
+```
+
+
+Here's what you get..
+```{r}
+str(mod.km)
+mod.km$centers
+
+```
+
+
+Compare...(these can be different)
+```{r}
+(centroidsKM.df <- data.frame(clusterKM=factor(1:K),
+                              mod.km$centers))
+
+data.df$clusterKM <- factor(mod.km$cluster)
+
+ggplot(data.df,aes(x,y,color=clusterKM))+
+    geom_point(size=2)+
+    guides(color=F)+
+    geom_point(data=centroidsKM.df,aes(x,y,color=clusterKM),size=5)+
+    geom_point(data=centroidsKM.df,aes(x,y),size=5,shape=1,color="black")+
+    ggtitle("kmeans cluster")
+
+
+
+centroids.df <- data.df %>%
+        group_by(cluster) %>%
+        summarize(x=mean(x),
+                  y=mean(y),
+                  cluster0=unique(cluster))
+ggplot(data.df,aes(x,y,color=cluster))+
+    geom_point(size=2)+
+    guides(color=F)+
+    geom_point(data=centroids.df,aes(x,y,color=cluster0),size=5)+
+    geom_point(data=centroids.df,aes(x,y),size=5,shape=1,color="black")+
+    ggtitle("our cluster")
+
+```
+
+
+how do our methods agree??
+```{r}
+with(data.df,table(cluster,clusterKM))
+
+data.df %>%
+    filter(cluster=="C",
+          clusterKM==3)
+
+```
+
+
+How did kmeans perform
+```{r}
+with(data.df,table(cluster.orig,clusterKM))
+
+
+
+
+```
+
+
+
+##Questions: How many clusters to use???
+We could rebuild with more clusters
+
+```{r}
+numClusters <- 6
+
+data.df$cluster <- sample(LETTERS[1:numClusters],nrow(data.df),rep=T)
+doCluster()
+
+for(m in 1:6)
+    show(doCluster())
+
+
+
+
+```
+
+
+There are various measures of clustering effectiveness. One is the
+Total Sum of Squares (TWSS)
+THe return value of kmeans returns a lot of useful informatin
+```{r}
+str(mod.km)
+
+
+```
+
+
+##Total Within Sum-of-Squares
+Included is Total Within Sum-of-Squares: tot.wininss=TWSS.
+```{r}
+mod.km$tot.withinss
+```
+
+
+We could calculate this ourselves. Within each cluster, calculate
+the SE around the centroid, then add these up.
+
+Here it is computed directly with the Kmeans clusters
+```{r}
+data.df%>%
+    group_by(clusterKM)%>%
+    mutate(x0=mean(x),
+           y0=mean(y))%>%
+    summarize(totss=sum( (x0-x)^2+(y0-y)^2))%>%
+    with(sum(totss))
+
+```
+
+
+TWSS is one gauge of how well the clustering fits the
+data. The trouble is that TWSS decreases as the k (= number of
+clusters) increases.
+
+Look at how TWSS changes as the number of clusters
+increases. This is called the "elbow" methods
+
+Use 3 means for demo purposes
+```{r}
+N <- 200
+maxK<- 6
+sd0 <- 1
+
+```
+
+
+Use the multivariate normal distribution to put points into the k
+classes. Note that if the standard deviation is large, these
+clusters will overlap.
+
+Centers for the clusters
+```{r}
+maxK <- 6
+mu <- matrix(c(-5,5,0,5,5,5,-3,-6,0,-3,3,-3),byrow=T,nrow=6)
+mu
+
+dat <- matrix(nrow=maxK*N,ncol=2)
+for(i in 1:maxK){
+    dat[(N*(i-1)+1):(N*i),] <- mvrnorm(N,mu[i,],diag(c(1,1)*sd0))
+}
+
+
+```
+
+
+Play around with this...
+```{r}
+K <- 6
+(theseClusters <- clusterLabels[1:K])
+data.df <-
+    data.frame(x=dat[,1],
+               y=dat[,2],
+               cluster.orig = rep(clusterLabels[1:maxK],each=N)) %>% 
+    filter(cluster.orig %in% theseClusters) %>%
+    droplevels()
+
+gg.orig <- data.df %>% 
+    ggplot()+
+    geom_point(aes(x,y,color=cluster.orig),size=2)+
+    guides(color=F)+
+    ggtitle("Original Clusters")
+gg.orig
+
+
+```
+
+
+Look for the "elbow"
+```{r}
+M <- 15
+twissVals <- numeric(M)
+for(k in 1:M){
+    mod.kmeans <- kmeans(data.df[c("x","y")],centers=k,nstart=25)
+    twissVals[k] <- mod.kmeans$tot.withinss
+}
+    
+data.frame(k=1:M,
+           twiss=twissVals) %>%
+    ggplot()+
+    geom_point(aes(k,twiss))+
+    geom_line(aes(k,twiss))+
+    scale_x_continuous(breaks=1:M)
+
+
+
+```
+
+
+
+##Using the factoextra package
+The factoextra package has some tools
+For example, it will create the TWSS plot
+```{r}
+data.df <- data.df[c("x","y")]
+fviz_nbclust(data.df,kmeans,method="wss")
+
+
+```
+
+
+Visualizing the clustering
+```{r}
+K <- 3
+mod.km <- kmeans(data.df,K,nstart=25)
+data.df$cluster <- factor(mod.km$cluster)
+```
+
+
+The plot
+```{r}
+ggplot(data.df,aes(x,y,color=cluster))+
+    geom_point(size=2)+
+    guides(color=F)+
+    ggtitle("kmeans cluster")
+
+
+
+```
+
+
+Here is how factoextra does it.
+```{r}
+fviz_cluster(mod.km,data=data.df[,1:2])
+```
+
+
+This visualization uses Principal Components Analysis to project
+onto a new set of basis vectors. For only two dimensions, there
+isn't much gained.
+
+
+##More than 2 dimensions.
+Create a data frame with 4 predictors
+```{r}
+N <- 100
+dim <- 4
+K <- 4
+mu <- sample(-5:5,5*K,rep=T)
+sd0 <- 2
+dat <- c()
+for(k in 1:K){
+    dat <- c(dat,c(mvrnorm(N,c(mu[2*k-1],mu[2*k]),diag(c(1,1)*sd0)),
+                   mvrnorm(N,c(mu[2*k+1],mu[2*k+2]),diag(c(1,1)*sd0))))
+}
+
+```
+
+
+Package the data...
+```{r}
+dat <- matrix(dat,byrow=F,ncol=dim)
+data.df <-
+    data.frame(x1=dat[,1],
+               x2=dat[,2],
+               x3=dat[,3],
+               x4=dat[,4])
+
+```
+
+
+There is no simple visualization available.
+```{r}
+ggplot(data.df,aes(x1,x2))+geom_point()
+ggplot(data.df,aes(x1,x3))+geom_point()
+ggplot(data.df,aes(x1,x4))+geom_point()
+
+
+```
+
+
+We can still cluster.
+Just to be safe, scale the data and repack into data frame.
+```{r}
+data.df <- scale(data.df)
+data.df <-data.frame(data.df)
+
+```
+
+
+Apply kmeans
+```{r}
+mod.km <- kmeans(data.df,K,nstart=25)
+data.df$cluster <- factor(mod.km$cluster)
+```
+
+
+Ok..what do we do now, we have a clustering, but how does it look?
+
+fviz_cluster will project onto the "best" two dimensions
+```{r}
+fviz_cluster(mod.km,data=data.df[,1:4])
+
+```
+
+
+We will look more closely at what is going on here when we talk
+about Principal Components
+
+
+Silhoutte Method
+https://en.wikipedia.org/wiki/Silhouette_(clustering)
+The simple idea is that for each observation,  we compute both
+
+ * The average distance to each point in its cluster $a$
+ * The average distance to each point in the other clusters $b_c$
+ * Identify the "closest" (smallest average distance) other distance
+$b_0$
+Compute the silhoutte values
+$$s=\frac{b_0-a}{\mathrm{max}(a,b_0)}$$
+A little thought shows that $-1\le s \le 1$. Values near 1 indicate
+a is real small compared to b_0....hence a good cluster. Values
+near -1 indicate that a is futher away from points in its cluster
+relative to some other cluster...hence a bad cluster.
+
+The average of all the values of $s$ is an indication of
+cluster. Large average $s$ is best.
+need the cluster library for silhoutte
+```{r}
+library(cluster)
+K <- 3
+mod.km <- kmeans(data.df,K,nstart=25)
+```
+
+
+compute the solution. The get_dist(data.df) indicates we are using
+normal Euclidian distance. Other distances (Pearson correlation)
+can also be used.
+```{r}
+sil <- silhouette(mod.km$cluster,get_dist(data.df))
+
+```
+
+
+the top of the sil matrix. sil_width is the value of $s$ defined above
+```{r}
+sil[1:10,1:3]
+
+```
+
+
+here is the guage of the clustering
+```{r}
+mean(sil[,3])
+
+```
+
+
+We can automate this.
+function to compute average silhouette for k clusters
+```{r}
+avg_si <- function(k) {
+  mod.km<- kmeans(data.df, centers = k, nstart = 25)
+  ss <- silhouette(mod.km$cluster, get_dist(data.df))
+  mean(ss[, 3])
+}
+avg_si(3)
+```
+
+
+Compute and plot wss for k = 2 to k = 15
+```{r}
+k.values <- 2:15
+
+```
+
+
+extract avg silhouette for 2-15 clusters
+
+```{r}
+avg_si_vals <- map_dbl(k.values, avg_si)
+
+data.frame(k=k.values,si=avg_si_vals)%>%
+    ggplot()+
+    geom_point(aes(k,si))+
+    geom_line(aes(k,si))+
+    scale_x_continuous(breaks=k.values)+
+    ggtitle("Average silhoutte values")
+
+```
+
+
+the maximim (maxima) indicate good clustering values.
+
+Neither of these methods is an exact process. Choosing the best
+number of  clusters is an art, not a science.
+
+
+
+#Application of Clustering: College Scorecard Data
+Here is a data set of private colleges. Data is taken from
+College Scorecard
+https://collegescorecard.ed.gov
+and
+https://collegescorecard.ed.gov/data/
+I've created a subset of the data consisting of private colleges
+and some selected variables.
+
+```{r}
+college.df <- read.csv("/home/rstudio/users/kurtze1/ADM/class/Colleges2015.csv")
+names(college.df)
+
+```
+
+
+ * ADM_RATE: admit rate
+ * SAT_AVG_ALL: Average SAT (ACT converted)
+ * PCIP27: Degrees in Math/Stat
+ * UGDS_WHITE: Percent White
+ * PPTUG_EF: Percent Part-time
+ * NPT4_PRIV: Net Price
+ * NPT41_PRIV: Net Price 0-30k Income bracket
+ * AVGFACSAL: Average Fac Salary
+ * PELL: Percent Pell Eligible
+ * C150_4: 6 year completion rate
+ * CDR3: 3 year load default rate
+ * PELL_DEBT_MED: Median debt Pell Eligible
+ * NOPELL_DEBT_MED: Median debt Not Pell Eligible
+ * FAMINC: Family Income
+*
+
+Look at what we have
+```{r}
+head(college.df)
+inst <- college.df[,1]
+head(college.df[,-1])
+str(college.df)
+```
+
+
+Scale and check...
+```{r}
+college.df <- data.frame(scale(college.df[,-1]))
+head(college.df)
+
+
+```
+
+
+Intial Clustering
+```{r}
+K <- 3
+mod.km <- kmeans(college.df,K,nstart=25)
+mod.km$cluster
+
+```
+
+
+Here's how the fviz_cluster works, with a little more detail
+Compute the principal components (more on this next time)
+```{r}
+mod.pc <- prcomp(college.df)
+
+fviz_pca_var(mod.pc)
+
+```
+
+
+Principal Components identifies a change af basis that better
+represents the variability of the data. Basically, the new basis
+vectors, in order, represent directions of greatest variability.
+```{r}
+rot.mat <- mod.pc$rotation
+dim(rot.mat)
+dim(college.df)
+
+```
+
+
+Change of basis!!!
+```{r}
+college.mat <- as.matrix(college.df)
+
+college.rot <-  college.mat%*% rot.mat
+head(college.rot)
+
+```
+
+
+Fix it up as a data frame.
+```{r}
+collegeRot.df <- data.frame(college.rot)
+
+mod.km2 <- kmeans(collegeRot.df,K,nstart=25)
+table(mod.km$cluster,mod.km2$cluster)
+table(mod.km$cluster,mod.km2$cluster)
+table(mod.km$cluster)
+table(mod.km2$cluster)
+
+head(collegeRot.df)
+
+
+```
+
+
+Now add the clusters and the institional names
+```{r}
+collegeRot.df$cluster <- factor(mod.km$cluster)
+collegeRot.df$inst <- inst
+
+```
+
+
+How are we looking....
+```{r}
+head(collegeRot.df)
+
+
+```
+
+
+here is the same vizualization as fviz_nbcluster only with the
+institution names included.
+```{r}
+collegeRot.df%>%
+    ggplot()+
+    geom_point(aes(PC1,PC2,color=cluster))+
+    geom_text(aes(PC1,PC2,color=cluster,label=inst),size=2.5)+
+    guides(color=F)+
+    ggtitle("Private College Clustering")
+
+
+```
+
+
+This looks a little sloppy...ggrepel produces better labeling.
+```{r}
+library(ggrepel)
+
+```
+
+
+replace geom_text with geom_text repel
+```{r}
+collegeRot.df%>%
+    ggplot()+
+    geom_point(aes(PC1,PC2,color=cluster))+
+    geom_text_repel(aes(PC1,PC2,color=cluster,label=inst),size=2.5)+
+    ##    guides(color=TRUE)+
+    ggtitle("Private College Clustering")
+
+```
+
+
+#2 Your turn
+Play around with data set. Explore different number of clusters and
+and vizualizations. Do you see anything interesting or insightful emerging??
+Can you find St. Olaf? What about other private colleges you know?
+Do the clusterings seem appropriate based what you know about these schools?

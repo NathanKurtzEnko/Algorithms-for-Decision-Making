@@ -1,0 +1,904 @@
+---
+title: "4-30-19"
+author: "Nathan Kurtz-Enko"
+date: "4/30/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache = TRUE)
+```
+#Introduction
+The goal here is to use a combination of clustering techniques
+along with Principal Components in order to understanding groupings
+of professional basketball players in the National Basketball
+Assocation (NBA)
+
+
+#Load the libraries
+```{r}
+suppressMessages(library(ggplot2))
+suppressMessages(library(dplyr))
+suppressMessages(library(ggrepel))
+suppressMessages(library(graphics))
+suppressMessages(library(factoextra))
+
+
+```
+
+
+
+#Create the data
+For our dataset, we will use use Advanced Stats found at 
+Set Basketball-reference.com: NBA/Season/Advanced
+The data were extracted via some web scraping and data curation
+using R's rvest package
+Run Rvest_NBA.R to extract the data.
+
+
+Read the data, it's been saved to file.
+```{r}
+nba.df0 <- read.csv("NBA2019.csv")
+
+
+```
+
+
+How many observations?
+```{r}
+nrow(nba.df0)
+
+```
+
+
+Who are the players?
+```{r}
+(players <- nba.df0$Player)
+
+```
+
+
+##Some data reorganization
+To start, we will subset the data. As a first step,
+will just use players who logged the most minutes during the
+season. For our purposes, we'll use the top 15%.
+
+
+Take top % or of players my minutes played
+```{r}
+(minMins <- with(nba.df0,quantile(MP,0.85)))
+
+```
+
+
+Only use these players, and LeBron James (who was injured and
+wasn't in the top 15% of minutes played)
+```{r}
+nba.df <- nba.df0 %>% 
+    filter(MP>minMins| Player == "LeBron James") 
+
+    
+```
+
+
+##Principal Components
+Extract player names and the data fields
+```{r}
+(players <- nba.df$Player)
+nba.df1 <-  nba.df[,8:27]
+
+```
+
+
+Scale and add row names
+```{r}
+nba.df1 <- data.frame(scale(nba.df1))
+row.names(nba.df1) <- players
+
+```
+
+
+
+Here is the Principal Components analysis
+```{r}
+nba.pca <- prcomp(nba.df1)
+```
+
+
+What does facto tell us?
+```{r}
+fviz_pca_biplot(nba.pca,repel=TRUE)
+
+```
+
+
+
+##Principal Components by hand.
+Using the nba.pc data frame, we can extract information and build
+custom views.
+
+Pull off the PCA information
+This is the change of basis matrix (V in the SVD)
+```{r}
+rots <- nba.pca$rotation
+
+
+```
+
+
+Rotate into the new basis.
+```{r}
+nba.pca1<- data.matrix(nba.df1) %*% rots
+dim(nba.pca1)
+
+
+```
+
+
+The first three directions
+```{r}
+pca1 <- nba.pca1[,1]
+pca2 <- nba.pca1[,2]
+pca3 <- nba.pca1[,3]
+
+
+
+```
+
+
+##Add in K Means clustering to the Principal Components
+
+
+Five clusters, this is arbitrary
+```{r}
+K <- 5
+```
+
+
+run 30 times, allow up to 30  iterations for convergence
+```{r}
+nba.km <- kmeans(nba.df1,K,iter.max=20,nstart=30)
+
+```
+
+
+Our clusters
+```{r}
+nba.km$cluster
+
+```
+
+
+Add the clusters to the data frame
+```{r}
+nba.df$cluster.km<- nba.km$cluster
+head(nba.df)
+
+```
+
+
+Look at one cluster
+Who are these players...any NBA fans out there?
+```{r}
+filter(nba.df,cluster.km==2)%>%
+    dplyr::select(Player)
+
+
+```
+
+
+What are the cluster sizes?
+```{r}
+with(nba.df,table(cluster.km))
+
+```
+
+
+Build the rotated data frame
+```{r}
+nbaCluster.df <- data.frame(pca1,pca2,cluster=factor(nba.df$cluster.km),name=players)
+
+```
+
+
+plot the cluster.pcas on top of the PCA first two components
+```{r}
+ggplot(nbaCluster.df,aes(pca1,pca2,color=cluster))+
+    geom_point(size=1)+
+    geom_text_repel(aes(label=name),size=3)+
+    ggtitle("NBA Cluster Analsys and PCA")
+```
+
+
+Anything interesting here?        
+
+
+
+#Hierarchical clustering
+As an alternative to Kmeans, we can use Hierarchical Clustering
+Use R hclust function.
+
+The distance function
+```{r}
+nba.dist <- dist(nba.df1)
+    
+nba.hc.c <- hclust(nba.dist,method="complete")
+nba.hc.a <- hclust(nba.dist,method="average")
+nba.hc.s <- hclust(nba.dist,method="single")
+
+
+```
+
+
+Look at the hierarchical plots
+Complete
+```{r}
+par(mfrow=c(1,1))
+plot(nba.hc.c,cex=0.5,main="Complete")
+
+
+```
+
+
+Average
+```{r}
+plot(nba.hc.a,cex=0.5)
+
+```
+
+
+Single
+```{r}
+plot(nba.hc.s,cex=0.5)
+
+```
+
+
+
+Better visuals using ggdendrogram
+```{r}
+library(ggdendro)
+
+```
+
+
+Complete
+```{r}
+ggdendrogram(nba.hc.c,rotate=T)
+
+```
+
+
+Average
+```{r}
+ggdendrogram(nba.hc.a,rotate=T)
+
+```
+
+
+Single
+```{r}
+ggdendrogram(nba.hc.s,rot=T)
+
+```
+
+
+
+We can do better visuals with ggplot
+ggdendro library
+
+Extract the gg data using the complete distance
+```{r}
+nba.dendr <- dendro_data(nba.hc.c)
+
+```
+
+
+
+Build the plot
+```{r}
+nba.dendro.gg <-
+    ggplot() +
+    geom_segment(data=segment(nba.dendr),
+                 aes(x=x, y=y, xend=xend, yend=yend),size=.1) +
+    geom_text(data=label(nba.dendr),
+              aes(x=x, y=y, label=label, hjust=0),
+              size=2,color="blue") +
+    coord_flip() +
+    scale_y_reverse(expand=c(0.2, 0))+
+    theme(axis.line.y=element_blank(),
+          axis.ticks.y=element_blank(),
+          axis.text.y=element_blank(),
+          axis.title.y=element_blank(),
+          panel.background=element_rect(fill="white"),
+          panel.grid=element_blank())+
+    guides(color=F)+    
+    ggtitle("Hierarchical Clustering of NBA Players")
+nba.dendro.gg
+
+
+
+```
+
+
+Identify clusters
+Pick a cut level
+```{r}
+Cut.lev <- 6
+cut.labs <- cutree(nba.hc.c,Cut.lev)
+
+```
+
+
+create data frame to match to player names
+```{r}
+cut.df <- data.frame(Player=names(cut.labs),
+                     cluster=cut.labs)
+
+```
+
+
+
+add in cluster information
+```{r}
+labels.df <- label(nba.dendr)%>%
+        inner_join(cut.df,by=c("label"="Player"))
+
+```
+
+
+Replot with clusters labeled
+```{r}
+nba.dendro.gg1 <- nba.dendro.gg +
+    geom_text(data=labels.df,
+              aes(x=x, y=y, label=label,
+                  hjust=0,
+                  color=factor(cluster)),
+              size=2)+
+    scale_color_brewer(palette="Set1")+
+  ggtitle("Hierarchical Clustering of NBA Players With Grouping")
+nba.dendro.gg1
+
+
+```
+
+
+
+Use correlation as the distance metric
+A different way of measuring distance is to use 1-cor. This way,
+players that are high correlated are close together. 
+
+
+The tricky bit is to get the right correlation. We could either
+look at how the stat variables are correlated, or how the players
+are correlated. We want the player correlation.
+
+```{r}
+cor.mat <- cor(t(nba.df1))
+
+```
+
+
+There should be a row/col for each player
+```{r}
+dim(cor.mat)
+
+nba.dist.cor <- 1-as.dist(cor.mat)
+nba.hc.cor <- hclust(nba.dist.cor,method="complete")
+
+nba.dendr.cor <- dendro_data(nba.hc.cor)
+
+```
+
+
+
+```{r}
+nba.dendro.gg2 <- ggplot() +
+  geom_segment(data=segment(nba.dendr.cor),
+               aes(x=x, y=y, xend=xend, yend=yend),size=.1) +
+  geom_text(data=label(nba.dendr.cor),
+            aes(x=x, y=y, label=label, hjust=0), size=2,color="blue") +
+  coord_flip() + scale_y_reverse(expand=c(0.2, 0))+
+  theme(axis.line.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_rect(fill="white"),
+        panel.grid=element_blank())+
+  ggtitle("Hierarchical Clustering using PCA")
+nba.dendro.gg2
+
+```
+
+
+
+Add cluster cuts
+
+```{r}
+Cut.lev <- 6
+cut.labs <- cutree(nba.hc.cor,Cut.lev)
+cut.df <- data.frame(Player=names(cut.labs),
+                     cluster=cut.labs)
+
+```
+
+
+add in cluster information
+```{r}
+labels.df <- label(nba.dendr.cor)%>%
+        inner_join(cut.df,by=c("label"="Player"))
+
+
+```
+
+
+Replot with clusters labeled
+```{r}
+nba.dendro.gg2 <- nba.dendro.gg2 +
+    geom_text(data=labels.df,
+              aes(x=x, y=y, label=label,
+                  hjust=0,
+                  color=factor(cluster)),
+              size=2)+
+    scale_color_brewer(palette="Set1")+
+  ggtitle("Hierarchical Clustering (Correlation)")
+nba.dendro.gg2
+
+
+```
+
+
+
+##Heatmaps
+This allows us to see clustering in two dimensions
+A nice into can be found at: http://www.r-bloggers.com/drawing-heatmaps-in-r/
+
+
+
+Heatmap without clustering/
+each grid value is the player x stat value (scaled)
+
+
+Set the color palatte
+```{r}
+my_palette <- colorRampPalette(c("red", "white", "blue"))(n = 20)
+my_palette
+
+
+```
+
+
+Build a heat map. This requires a data matrix
+```{r}
+nba.data <- data.matrix(nba.df1)
+heatmap(nba.data,col=my_palette,Rowv=NA,Colv=NA)
+
+```
+
+
+As displayed, this isn't really informative. We need to arrange the
+entries in a natural manner,
+
+
+Data clustering with trees
+
+
+Here we have a heatmap with a hierarchical clustering on both the
+players and the stat variables
+```{r}
+heatmap(nba.data,col=my_palette)
+
+
+```
+
+
+Use Pearson correlation as the distance function
+```{r}
+dist.pear <- function(x) as.dist(1-cor(t(x)))
+
+
+heatmap(nba.data,
+        col=my_palette,
+        distfun=dist.pear)
+
+```
+
+
+Intesting...
+
+## Assignment
+
+### Find another data set similar to the NBA dataset
+(Baseball Reference is one choice, but there are other, non-sport
+options). Perform a complete cluster and PCA analysis. 
+
+
+The World Bank data is one of the best sources for country level
+data. It contains hundreds of variables dating back to the
+1970's. The data has been meticulously gatherered and vetted. 
+Overall, it's hard to find a better source
+
+You can download data directly from their website at
+https://data.worldbank.org/.
+There are, fortunately, very nice R interfaces to the data. The
+best is wbstats
+
+
+Load the library
+```{r}
+library(wbstats)
+```
+
+
+
+
+Good introduction to wbstats package as a way of pulling off World
+Bank Data
+https://cran.r-project.org/web/packages/wbstats/vignettes/Using_the_wbstats_package.html
+
+
+
+Start by loading the cached data
+```{r}
+new_wb_cache <- wbcache()
+
+
+```
+
+
+##The wbstats package allows you to search for "indicators" related to any
+topic. You just supply a search term. 
+Look for indicators related to gini index.
+```{r}
+gini.ids <- wbsearch("Gini Coefficient")
+
+```
+
+
+When you are done you have indicator IDs and indicator descriptors
+Indicator Ids
+```{r}
+gini.ids$indicatorID
+```
+
+
+Descriptions
+```{r}
+gini.ids$indicator
+
+
+
+
+```
+
+
+The searches can be more  complicated, say using wild cards and
+regular expressions.
+```{r}
+gdp.ids <- wbsearch("gdp.*capita.*US\\$", cache = new_wb_cache)
+
+
+```
+
+
+or even more complicated regular expresions. 
+```{r}
+gdp.ids <- wbsearch("gdp.*capita.*US\\$", cache = new_wb_cache)
+
+
+```
+
+
+
+You can extract all the country names
+```{r}
+wb_countries <- wbcountries() 
+names(wb_countries)
+with(wb_countries,table(region))
+
+```
+
+
+Some of the names are actually regions. It's easy to get rid of
+regions. 
+```{r}
+allCountries <- wb_countries %>%
+    filter(region != "Aggregates") %>%
+    dplyr::select(country)
+
+```
+
+
+thesea are the countries
+```{r}
+allCountries
+
+
+```
+
+
+
+You can extract all the country names
+```{r}
+wb_countries <- wbcountries() 
+names(wb_countries)
+with(wb_countries,table(region))
+
+```
+
+
+Get rid of regions
+```{r}
+allCountries <- wb_countries %>%
+    filter(region != "Aggregates") %>%
+    dplyr::select(country)
+
+```
+
+
+thesea are the countries
+```{r}
+allCountries
+
+
+```
+
+
+##Another method is to go the World Bank website and just explore the data
+https://data.worldbank.org/indicator
+The indicator name is in the URL selector at the top of the webpage
+
+In any case, here are a few variables we can start workin with. I
+picked these by going to the world bank website. 
+
+
+##Some variables to explore
+Population
+```{r}
+pop <- "SP.POP.TOTL"
+
+```
+
+
+Population Density
+```{r}
+popdens <- "EN.POP.DNST"
+
+```
+
+
+GDP per capital
+```{r}
+gdp <- "NY.GDP.PCAP.CD"
+
+```
+
+
+Mortalilty under 5
+```{r}
+mort <- "SH.DYN.MORT"
+
+```
+
+
+School Enrollment secondary %
+```{r}
+secschool <- "SE.SEC.ENRR"
+
+```
+
+
+agriculltural land
+```{r}
+ag <- "AG.LND.AGRI.ZS"
+
+```
+
+
+CO2 Emissions,
+```{r}
+co2 <- "EN.ATM.CO2E.PC"
+
+```
+
+
+
+
+List the indicators
+```{r}
+inds <- c(pop,popdens,gdp,mort,secschool,ag,co2)
+inds
+```
+
+
+Now we can extract the data from the World Bank databaset. This
+takes akes a moment or two.
+
+Grab the data
+```{r}
+wb_dat <- wb(indicator = inds)
+
+
+```
+
+
+Let's see what we have
+```{r}
+with(wb_dat,table(indicatorID))
+
+```
+
+
+By date
+```{r}
+with(wb_dat,table(date,indicatorID))
+
+
+```
+
+
+Extract 2014 Data
+```{r}
+wb2014 <- wb_dat %>%
+    filter(date=="2014")
+
+
+```
+
+
+Drop regions and other variables
+```{r}
+wb2014 <- wb2014 %>% 
+    filter(country %in% allCountries$country) %>%
+    dplyr::select(-iso3c,-iso2c,-date,-indicator)
+
+
+```
+
+
+Spread the data so we can use it with clustering
+```{r}
+wb2014x <- wb2014 %>%
+    spread(indicatorID,value)
+head(wb2014x)
+
+
+```
+
+
+What does the US look like?
+```{r}
+wb2014x %>%
+    dplyr::filter(country=="United States")
+
+```
+
+
+Define some more suggestive field names    
+```{r}
+names(wb2014x)[2:10] <-
+    c("ag_use","co2","pop_dens","gdp_cap","sec_school","infant_mort","pop")
+summary(wb2014x)
+
+
+```
+
+
+There are still some NAs. Extract the complete cases. 
+```{r}
+cc <- complete.cases(wb2014x)
+wb.df <- wb2014x[cc,]
+
+```
+
+
+What's left...
+```{r}
+nrow(wb.df)
+
+
+```
+
+
+Save the data for future use
+```{r}
+write.csv(wb.df,"worldbank.csv",row.names=F)
+
+
+
+```
+
+
+
+#Hierarchical Clustering
+
+Grab all the countries
+```{r}
+(countries <- wb.df[,1])
+
+```
+
+
+How many countries do we have?
+```{r}
+(numCountries <- nrow(wb.df))
+
+```
+
+
+Scale the data. 
+```{r}
+wb.scale <- scale(wb.df[,-1])
+
+```
+
+
+Assign row names, this aids in plotting
+```{r}
+row.names(wb.scale) <- countries
+
+
+
+
+```
+
+
+Compute the pair-wise distances
+This computes aall
+```{r}
+wb.dist <- dist(wb.scale)
+str(wb.dist)
+
+```
+
+
+Note: We have this choose(numCountries,2) pairs of values
+```{r}
+numCountries*(numCountries-1)/2
+
+
+
+```
+
+
+##Hierarchical Clustering
+```{r}
+par(mfrow=c(1,1))
+hc1 <- hclust(wb.dist,method="complete")
+plot(hc1,cex=.5)
+
+```
+
+
+Look at all four clustering methods
+Note how different the shapes are
+```{r}
+op <- par(mfrow=c(2,2))
+hc1 <- hclust(d1,method="complete")
+plot(hc1,cex=.5)
+
+hc2 <- hclust(d1,method="average")
+plot(hc2,cex=.5)
+
+
+hc3 <- hclust(d1,method="single")
+plot(hc3,cex=.5)
+
+
+
+hc4 <- hclust(d1,method="centroid")
+plot(hc4,cex=.5)
+
+par(op)
+
+
+```
+
+
+Assignment: World Bank Data
+Extract a more interesting set of parameters. Explore the World
+Bank site and get at least 12 different (more is ok)
+features. Select at least two different years (separated in
+time). How do the clusters looks? If you add Principal Components,
+do you see any natural clustering behavior relative to the
+Principal Components?

@@ -1,0 +1,515 @@
+---
+title: "4-4-19"
+author: "Nathan Kurtz-Enko"
+date: "4/4/2019"
+output: pdf_document
+---
+
+```{r, include=FALSE}
+library(ISLR)
+library(tidyverse)
+library(tree)
+```
+
+
+#######################################################
+## Logistic Regression Synthetic Model
+#######################################################
+```{r}
+b0 <- 1
+b1 <- 1
+b2 <- -0.5
+sig <- 2
+n <- 100
+x1 <- rnorm(n,0,3)
+x2 <- rnorm(n,0,3)
+y <- b0+b1*x1+b2*x2+rnorm(n,0,sig)
+
+##  Build the data
+p <- exp(y)/(1+exp(y))
+vals <- map_chr(p,function(p) sample(c("A","B"),1,prob=c(p,1-p)))
+
+## Build the data frame
+data.df <- data.frame(val=vals,x1,x2)
+
+
+## What are we looking at...
+ggplot(data.df)+
+    geom_point(aes(x1,x2,color=val))
+
+
+
+## A tree 
+mod.tree <- tree(val~x1+x2,data=data.df,
+             control=tree.control(nrow(data.df),mindev=.01))
+
+##logistic regression
+mod.log <- glm(val~x1+x2,data=data.df,family="binomial")
+
+
+
+plot(mod.tree)
+text(mod.tree,cex=.5)
+
+
+##predictions from tree model
+preds <- predict(mod.tree,newdata=data.df,type="class")
+data.df$pred <- preds
+ggplot(data.df)+
+    geom_point(aes(x1,x2,color=pred))
+```
+
+```{r}
+#######################################################
+## Add a grid of predictions
+rng1 <- with(data.df,range(x1))
+rng2 <- with(data.df,range(x2))
+grid.xy <- expand.grid(seq(rng1[1],rng1[2],by=.1),
+            seq(rng2[1],rng2[2],by=.1))
+
+grid.df <- data.frame(x1=grid.xy[,1],
+                      x2=grid.xy[,2])
+
+
+##Extract the class predictions
+grid.df$pred.tree <- predict(mod.tree,newdata=grid.df,response="class")
+## Extract the probabilities...just the leaf proportions
+probs <- predict(mod.tree,newdata=grid.df)
+grid.df$prob.tree <- probs[,1]
+
+
+grid.df %>%
+    ggplot()+
+    geom_tile(aes(x1,x2,fill=prob.tree),alpha=0.4)+
+    scale_fill_gradient2(low="blue",mid="white",high="red",midpoint=0.5)+
+    geom_point(data=data.df,aes(x1,x2,color=val))+
+    scale_color_manual(values=c("red","blue"))
+```
+
+```{r}
+#######################################################
+## Just for comparison, here is the logistic regression
+#######################################################
+yvals <- predict(mod.log,newdata=grid.df)
+grid.df$prob.log=exp(yvals)/(1+exp(yvals))
+
+grid.df %>%
+    ggplot()+
+    geom_tile(aes(x1,x2,fill=prob.log),alpha=0.4)+
+    scale_fill_gradient2(low="blue",mid="white",high="red",midpoint=0.5)+
+    geom_point(data=data.df,aes(x1,x2,color=val))+
+    scale_color_manual(values=c("red","blue"))
+
+```
+
+```{r}
+
+#######################################################
+## Heart data from ISLR
+## 
+#######################################################
+heart.df <- read.csv("Heart.csv")
+head(heart.df)
+heart.df <- heart.df[,-1]
+head(heart.df)
+
+##Change the field names to make things easier to read
+names(heart.df) <- c("age","sex",
+                     "pain","bp","chol","fbs","ecg","hr",
+                     "ang","op","sl","ca","thal","HD")
+
+##Only keep complete cases
+cc <- complete.cases(heart.df)
+heart.df <- heart.df[cc,]
+
+##The distribution of HD (Heart Disease)
+with(heart.df,table(HD))
+with(heart.df,mean(HD=="Yes"))
+
+##Clean up pain variable...use values 1,2,3,4
+pain <- with(heart.df,unique(pain))
+newPain <- data.frame(pain=pain,newpain=factor(1:4))
+## join in and eliminate the extraneous variable
+heart.df <- heart.df %>%
+    inner_join(newPain) %>%
+    dplyr::select(-pain) %>%
+    rename(pain=newpain)
+
+## Build the tree
+mod1.tree <- tree(HD~.,data=heart.df,split="deviance")
+mod2.tree <- tree(HD~.,data=heart.df,split="gini")
+
+plot(mod2.tree,all=T)
+text(mod2.tree,pretty=0,cex=.5)
+
+plot(mod1.tree)
+text(mod1.tree,pretty=0,cex=.7)
+
+```
+
+```{r}
+#######################################################
+##Things to note: even at leaves, the splits can result in same
+##predictions. This is due to node purity.
+#######################################################
+
+#######################################################
+## Predicting SPAM content with trees
+#######################################################
+library(tidyverse)
+library(tree)
+```
+
+
+#######################################################
+## Need train/test data.
+#######################################################
+```{r}
+## Read in the  SPAM data set (from UCI)
+spam.df <- read.csv("SPAM.csv")
+head(spam.df)
+```
+
+#######################################################
+## Make sure response is a factor
+#######################################################
+```{r}
+spam.df <- mutate(spam.df,
+                  IsSpam=factor(IsSpam))
+
+```
+
+
+#######################################################
+## Build  train and test data
+#######################################################
+```{r}
+numRows <- nrow(spam.df)
+train <- sample(1:numRows,numRows/2,rep=F)
+spamTrain.df <- spam.df[train,]
+spamTest.df <- spam.df[-train,]
+
+```
+
+
+#######################################################
+## Our first tree...make is sorta deep since we're going to prune it
+## later
+#######################################################
+```{r}
+spam.tree <- tree(IsSpam~.,data=spamTrain.df,
+                  control=tree.control(nrow(spamTrain.df),mindev=0.001))
+
+##What do we have
+spam.tree
+plot(spam.tree)
+text(spam.tree,cex=0.5)
+
+
+## How well did we do on the training data?
+preds <- predict(spam.tree,type="class")
+with(spamTrain.df,table(IsSpam,preds))
+## Training error
+(err.train <- with(spamTrain.df,mean(IsSpam != preds)))
+
+
+##Compare with the Test data..error is larger, of course
+preds <- predict(spam.tree,newdata=spamTest.df,type="class")
+with(spamTest.df,table(IsSpam,preds))
+(err.test <- with(spamTest.df,mean(IsSpam != preds)))
+
+c(err.train,err.test)
+```
+
+
+
+#######################################################
+## Try with smaller mindev...how does the err.test change?
+```{r}
+spam.tree <- tree(IsSpam~.,data=spamTrain.df,
+                  control=tree.control(nrow(spamTrain.df),mindev=0.000))
+(numLeaves <- sum(spam.tree$frame$var =="<leaf>"))
+
+numFolds <- 10
+folds <- sample(1:numFolds,nrow(spamTrain.df),rep=T)
+
+
+err <- matrix(nrow=numLeaves,ncol=3)
+errCV <- numeric(numFolds)
+for(treeSize in numLeaves:2){
+    print(treeSize)
+    spam.prune <- prune.tree(spam.tree,best=treeSize)
+    preds.Train <- predict(spam.prune,newdata=spamTrain.df,type="class")
+    preds.Test <- predict(spam.prune,newdata=spamTest.df,type="class")
+    errTrain <- with(spamTrain.df,mean(IsSpam !=preds.Train))
+    errTest <- with(spamTest.df,mean(IsSpam !=preds.Test))
+    ##Cross validate: 
+    for(fold in 1:numFolds){
+        spamTrainTrain.df <- spamTrain.df[fold != folds,]
+        spamTrainTest.df <- spamTrain.df[fold == folds,]
+        spam.cv <- tree(IsSpam~.,data=spamTrainTrain.df,
+                          control=tree.control(nrow(spamTrainTrain.df),mindev=0.000))
+        spam.cv.prune <- prune.tree(spam.cv,best=treeSize)
+        preds <- predict(spam.cv.prune,newdata=spamTrainTest.df,type="class")
+        errCV[fold] <- with(spamTrainTest.df,mean(IsSpam !=preds))
+    }
+    err[treeSize,] <- c(errTrain,errTest,mean(errCV))
+}
+
+
+data.frame(treeSize=2:numLeaves,
+           train=err[-1,1],
+           test=err[-1,2],           
+           cv=err[-1,3]) %>%
+    gather(type,val,train:cv) %>% 
+    ggplot()+
+    geom_point(aes(treeSize,val,color=type),size=1)+
+    geom_line(aes(treeSize,val,color=type))+    
+    scale_color_manual(values=c("red","blue","black"))
+```
+
+
+#######################################################
+## Single Cross Validation for optimal size
+#######################################################
+```{r}
+spam.cv <- cv.tree(spam.tree,FUN=prune.misclass)
+plot(spam.cv)
+
+```
+
+
+#######################################################
+## Dig out the optimal tree size
+#######################################################
+```{r}
+size <- rev(spam.cv$size)
+(best.sz <- size[which.min(rev(spam.cv$dev))])
+```
+
+
+#######################################################
+## Prune the tree and plot it.
+#######################################################
+```{r}
+spam.prune=prune.misclass(spam.tree,best=best.sz)
+spam.prune
+plot(spam.prune)
+text(spam.prune,cex=0.5)
+```
+
+
+#######################################################
+## Time for predictions on the Test data
+```{r}
+preds.prune <- predict(spam.prune,newdata=spamTest.df,type="class")
+```
+
+
+#######################################################
+## How well did we do?
+#######################################################
+```{r}
+with(spamTest.df,table(preds.prune,IsSpam))
+err.test2 <- with(spamTest.df,mean(preds.prune!=IsSpam))
+##A slightly lower error rate
+c(err.test,err.test2)
+
+```
+#######################################################
+
+#######################################################
+## This will give you the probability of each class..Use this for an
+## ROC curve or threshholding in general
+#######################################################
+```{r}
+probs.prune <- predict(spam.prune,newdata=spamTest.df)
+hist(probs.prune[,1],breaks=25)
+
+
+
+```
+
+#######################################################
+## Bootstrapping
+## Variablity of the Regression Trees
+## Small variations in the data due to bootstrappinge
+## Here's the plan. Bootstrap training data a number of times. Each
+## time build a new tree, predict on testing data.
+## Save the results (probabilities). Use these to make final predictions
+#######################################################
+## To start, what happens if  you bootstrap a tree
+```{r}
+m.train <- nrow(spamTrain.df)
+m.test <- nrow(spamTest.df)
+doBootPlot <- function(){
+    boots <- sample(m.train,m.train,rep=T)
+    spamBoot.df <- spamTrain.df[boots,]
+    print(nrow(spamBoot.df))
+    spam.tree <- tree(IsSpam~.,data=spamBoot.df,
+                      control=tree.control(nrow(spamBoot.df),
+                                           mindev=0.005))
+    spam.cv <- cv.tree(spam.tree)
+    size <- spam.cv$size
+    (best.sz <- size[which.min(spam.cv$dev)])
+    spam.prune=prune.misclass(spam.tree,best=best.sz)
+    plot(spam.prune)
+    text(spam.prune,cex=0.5)
+}
+
+## Do this a bunch of times! Notice how different the trees are each time.
+doBootPlot()
+```
+
+#######################################################
+## Here we go...using this variability as a prediction technique
+## Bootstrap the data, build a new tree, predict on the new tree.
+## Save the values and average.
+#######################################################
+```{r}
+m.train <- nrow(spamTrain.df)
+m.test <- nrow(spamTest.df)
+spam.lm <- glm(IsSpam~.,data=spamTrain.df,family="binomial")
+
+resp <- predict.glm(spam.lm,newdata=spamTest.df)
+prob <- exp(resp)/(1+resp)
+preds <- prob>0.5
+with(spamTest.df,mean(IsSpam!=preds))
+
+## Bootstrapping...by hand
+B <- 20
+bootVals <- matrix(nrow=m.test,ncol=B)
+for(b in 1:B){
+    print(b)
+    boots <- sample(m.train,m.train,rep=T)
+    spamBoot.df <- spamTrain.df[boots,]
+    ## Build a deep tree
+    spam.tree <- tree(IsSpam~.,data=spamBoot.df,
+                      control=tree.control(nrow(spamBoot.df),
+                                           mindev=0.00))
+    ## Prune back and extract best size
+    spam.cv <- cv.tree(spam.tree)
+    size <- spam.cv$size
+    best.sz <- size[which.min(spam.cv$dev)]
+    ##pruned tree
+    spam.prune=prune.misclass(spam.tree,best=best.sz)
+    ## Predictions on test data
+    preds.prune <- predict(spam.prune,
+                           newdata=spamTest.df,
+                           type="vector")
+    ##Probabilities for each observation
+    bootVals[,b] <- preds.prune[,2]
+}
+
+dim(bootVals)
+##On row for each element of spamTest.df, one row for each boot
+head(bootVals)
+##plot(spam.tree)
+## Take
+probs.boot <- apply(bootVals,1,mean)
+preds.boot <- probs.boot > 0.5
+with(spamTest.df,table(IsSpam,preds.boot))
+##not a great improvement over what we saw earlier but the
+##bootstrapping makes it more stable.
+(err.boot <- with(spamTest.df,mean(IsSpam != preds.boot)))
+
+c(err.test2,err.boot)
+```
+
+
+#######################################################
+## Bootstrapping Logistic Regression
+## Recall how to make predictions with logistic regression
+
+```{r}
+##This gives the probability
+probs <- predict.glm(spam.lm,newdata=spamTest.df,type="response")
+## Convert to a prediction
+preds <- probs>0.5
+## error rate
+with(spamTest.df,mean(IsSpam!=preds))
+```
+### Bootstrap Logistic Regression. Use the results to make a
+### prediction. How does the error rate compare with the bootstrapped
+## tree error rate?
+
+
+#######################################################
+## All of this bootstrapping of trees can be done with the built in
+## library function randomForest.
+
+#######################################################
+```{r}
+## install.packages("randomForest")
+library(randomForest)
+```
+
+```{r}
+##We need to note the number of predictors
+p <- ncol(spamTrain.df)-1
+##Note: this technically is called  "bagging"
+spam.bag <- randomForest(IsSpam~.,
+                         data=spamTrain.df,
+                         mtry=p, ##use all the predictors
+                         ntree=100) ## 100 trees
+## Here's what it tells us
+spam.bag
+
+## Very interesting plot....
+## the different graphs are: 1) OOB Error, 2) False Positive rate 3)
+## False Negative Rate
+plot(spam.bag)
+
+## Make some predictions on the test data
+preds.bag <- predict(spam.bag,newdata=spamTest.df)
+
+## Confusion matrix
+with(spamTest.df,table(IsSpam,preds.bag))
+
+(err.bag <- with(spamTest.df,mean(IsSpam!=preds.bag)))
+
+##Comparison
+c(err.test,err.boot,err.bag)
+
+```
+
+```{r}
+#######################################################
+## Assignment
+## Compute the Out of Bag error...by hand.
+## Out of bag error means we use the left overs from the bootstrapping
+## to estimate the error rate
+## At each bootstrap, compute the error rate and save the value
+## Modifiy the "Bootstrapping by Hand" computation above to
+## account for the the "leftovers" from boot strapping
+## Use these to make predictions.
+## How does your oob error rate compare to the oob error rate reported
+## by randomForest?
+#######################################################
+
+## Random Forest
+
+spam.rf <- randomForest(IsSpam~.,
+                         data=spamTrain.df,
+                         mtry=p/3, ##use all the predictors
+                        ntree=100,
+                        importance=T) ## 100 trees
+
+plot(spam.rf)
+```
+
+#######################################################
+## Variable importance is an indication of how "important"
+## a variable is in determining reductions in error rate or gini value
+##
+## Here's the function that displays the importance values
+````{r}
+varImpPlot(spam.rf)
+```
+## Here are the actual importance values..the last two columns are
+## what you see in the plot
+```{r}
+importance(spam.rf)
+```
+#######################################################
+## Generate a better importance plot, more like Figure 8.9 of ISLR!

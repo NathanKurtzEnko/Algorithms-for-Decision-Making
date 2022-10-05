@@ -1,0 +1,700 @@
+---
+title: "4-2-19"
+author: "Nathan Kurtz-Enko"
+date: "4/2/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache = TRUE)
+library(tidyverse)
+library(tree)
+```
+
+
+#1 Introduction To Regression Trees
+Regression (and classfication) trees try to model data by building
+a decision tree. The key idea is to make decisions on one parameter
+at a time. At each step, we "split" the parameter space into to
+groups with the aim of mimimizing error (MSE for regressions,
+something akin to misclassification rate for classification).
+
+#2 Synthetic Data Example
+Start by building some data. 
+
+Create some region boundaries. the places we are making the cuts for our branch
+```{r}
+x1 <- 8
+x2 <- 3
+y1 <- 4
+y2 <- 7
+
+```
+
+Now build a grid and create the regions.
+```{r}
+vals <- expand.grid(seq(0,10,.25),seq(0,10,.25))
+```
+
+The regions or the cuts
+```{r}
+R1 <- vals[vals[,1]<x1 & vals[,2]<y1,]
+R2 <- vals[vals[,1]>=x1 & vals[,2]<y1,]
+R3 <- vals[vals[,1]<x2 & vals[,2]>=y1 & vals[,2]<y2,]
+R4 <- vals[vals[,1]>=x2 & vals[,2]>=y1,]
+R5 <- vals[vals[,1]<x2 & vals[,2]>=y2,]
+```
+
+
+Check that we got everything..these should be the same
+```{r}
+c(nrow(R1)+nrow(R2)+nrow(R3)+nrow(R4)+nrow(R5))
+nrow(vals)
+```
+
+
+Build some quantitave responses. The variable mu keeps track of the means of
+a normal distribution used to create the values for each region.
+
+```{r}
+mu <- c(-4,0,1,5,-2)
+regs.df <- data.frame(row=
+                        c(as.numeric(row.names(R1)),
+        as.numeric(row.names(R2)),
+        as.numeric(row.names(R3)),
+        as.numeric(row.names(R4)),
+        as.numeric(row.names(R5))),
+      region=factor(c(rep(1,nrow(R1)),
+               rep(2,nrow(R2)),
+               rep(3,nrow(R3)),
+               rep(4,nrow(R4)),
+               rep(5,nrow(R5))))
+      )%>%
+    group_by(region)%>%
+    mutate(n=n())%>%
+    mutate(z=rnorm(n,mu[region],5))%>% #Here is where we create the value
+    dplyr::select(-n)
+
+
+```
+
+
+Package as a data frame.
+```{r}
+data.df <- data.frame(row=1:nrow(vals),
+                      x=vals[,1],
+                      y=vals[,2])%>%
+    inner_join(regs.df,by="row")
+```
+
+
+Take a peek...
+```{r}
+head(data.df)
+
+```
+
+
+And a plot of the "true" regions....
+```{r}
+gg.regions<-ggplot()+
+    geom_tile(data=data.df,aes(x,y,fill=region))+
+    scale_fill_manual(values=c("red","blue","green","brown","cyan"))+
+    ggtitle("True Region Boundaries")
+gg.regions
+
+```
+
+
+A plot of the data.....
+```{r}
+midVal<-with(data.df,mean(z))
+gg.data <- ggplot()+
+    geom_tile(data=data.df,aes(x,y,fill=z))+
+    scale_fill_gradient2(low="blue",midpoint=midVal,high="red")+
+  guides(fill=F)+
+    ggtitle("Values")
+gg.data
+
+```
+
+##2 Model with Linear regression
+
+This data doesn't really fit a regression structure, but we can
+give it shot
+
+Build the model and make the predictions
+```{r}
+mod.lm <- lm(z~x+y,data=data.df)
+data.df$pred.lm <- predict(mod.lm)
+```
+
+
+The MSE for the linear model.
+```{r}
+(mse.lm <- with(data.df,mean((z-pred.lm)^2)))
+
+```
+
+
+```{r}
+gg.lm <- ggplot()+
+    geom_tile(data=data.df,aes(x,y,fill=pred.lm))+
+    scale_fill_gradient2(low="blue",midpoint=midVal,high="red")+
+  guides(fill=F)+
+    ggtitle("Linear Model Estimates")
+gg.lm
+
+```
+
+
+##1 Building  Regression Trees by Hand
+The idea is that...
+
+ * For each predictor, split the data into two parts: $x<s$ and $x>s$.
+ * For this split, compute the mean of each group. Use this as the
+group prediction. Compute the resulting MSE (RSS).
+ * Over all predictors and alll splits, use the one that minimizes
+the MSE (RSS).
+
+Note: For classification, we would use classification rate (or a
+related value).
+
+Also....This method doesn't care if the predictor is continuous or
+discrete.
+
+
+Here we go...
+Start with a the full  data set
+Split on both x and y values
+Get the ranges in each predictor.
+
+
+```{r}
+rangeX <- with(data.df,range(x))
+xvals <- seq(rangeX[1],rangeX[2],by=.1)
+
+rangeY  <- with(data.df,range(y))
+yvals <- seq(rangeY[1],rangeY[2],by=.1)
+```
+
+
+Keep track of RSS as we run through all the split values.
+```{r}
+calcRSS<-function(splitVal,df,axis){
+  if(axis==1){
+    df$val<-df$x
+  }else{
+    df$val<-df$y
+  }
+  df %>% 
+    mutate(tempRegion= val < splitVal) %>% 
+    group_by(tempRegion) %>% 
+    mutate(zBar=mean(z)) %>% 
+    summarize(err=sum((z-zBar)^2)) %>% 
+    ##add up the errors  
+    with(sum(err))
+}
+
+
+```
+
+Compute the Residual Sum of Squares over each axis
+```{r}
+rssValsx<-map_dbl(xvals,function(x) calcRSS(x,data.df,1))
+rssValsy<-map_dbl(yvals,function(x) calcRSS(x,data.df,2))
+```
+
+```{r}
+min(rssValsx)
+min(rssValsy)
+```
+
+Now split on the smaller of theses
+```{r}
+(splitVal1 <- yvals[which.min(rssValsy)])
+data.df<-data.df %>% 
+  mutate(split1 = y < splitVal1,
+         axis1 = 2)
+```
+
+
+Question: How well does this work? For each observation, use the mean of its region as the prediction.
+
+```{r}
+data.df<-data.df %>% 
+  mutate(regionVal=factor(ifelse(split1,1,2)))
+```
+
+Look at a plot and computer MSE
+```{r}
+data.df%>% 
+  ggplot()+
+  geom_tile(aes(x,y,fill=regionVal))
+
+
+mse.tree<-data.df %>% 
+  group_by(regionVal) %>% 
+  mutate(zBar=mean(z),
+         err=z-zBar) %>% 
+  with(mean(err^2))
+```
+
+How does this compare with the MSE from linear regression? About the same.
+```{r}
+c(mse.lm,mse.tree)
+```
+
+Now continue on both branches. 
+
+
+Split the region into subregions
+```{r}
+data.df0 <- data.df%>% #this is the bottom or region 1 from last graph
+    filter(split1==TRUE)
+data.df1 <- data.df%>% # this is the top
+    filter(split1==FALSE)
+
+```
+Repeat the calculation above on each of these smaller data sets.
+
+
+```{r}
+rangeX <- with(data.df0,range(x))
+xvals <- seq(rangeX[1],rangeX[2],by=.1)
+rssValsx<-map_dbl(xvals,function(x) calcRSS(x,data.df0,1))
+
+rangeY  <- with(data.df0,range(y))
+yvals <- seq(rangeY[1],rangeY[2],by=.1)
+rssValsy<-map_dbl(yvals,function(x) calcRSS(x,data.df0,2))
+
+min(rssValsx) #if this value is lower than min(rssValsy) then on the bottom section its better to split in the x direction
+min(rssValsy)
+
+splitVal2 <- xvals[which.min(rssValsx)]
+
+data.df<-data.df %>% 
+  mutate(split2=  x < splitVal2,
+         axis2=1)
+```
+
+Other region
+```{r}
+rangeX <- with(data.df1,range(x))
+xvals <- seq(rangeX[1],rangeX[2],by=.1)
+rssValsx<-map_dbl(xvals,function(x) calcRSS(x,data.df1,1))
+
+rangeY  <- with(data.df1,range(y))
+yvals <- seq(rangeY[1],rangeY[2],by=.1)
+rssValsy<-map_dbl(yvals,function(x) calcRSS(x,data.df1,2))
+####
+min(rssValsx) #again if this is smaller than min(rssValsy) you want to split in the x directiion but this time we are using data from the top section
+min(rssValsy)
+
+(splitVal3 <- xvals[which.min(rssValsx)])
+data.df<-data.df %>% 
+  mutate(split3 =  x < splitVal3,
+         axis3 = 1)
+
+```
+
+What do we have now....
+
+```{r}
+data.df<-data.df %>% 
+  ungroup() %>% 
+  mutate(regionVal=factor(ifelse(split1,
+                        ##lower..left then right
+                        ifelse(split2,1,2),
+                        ##upper..left then right
+                        ifelse(split3,3,4)))) %>% 
+  group_by(regionVal) %>% 
+  mutate(regionEst=mean(z))
+
+```
+
+Plot the result
+```{r}
+gg.tree<-data.df%>% 
+  ggplot()+
+  geom_tile(aes(x,y,fill=regionVal))
+gg.tree
+```
+Compute the MSE for this tree
+```{r}
+mse.tree<-data.df %>% 
+  group_by(regionVal) %>% 
+  mutate(zBar=mean(z),
+         err=z-zBar) %>% 
+  with(mean(err^2))
+
+```
+
+An improvement??
+```{r}
+c(mse.lm, mse.tree)
+```
+
+Yes. What does this look like?
+```{r}
+gg.est <-data.df %>% 
+  ggplot()+
+  geom_tile(aes(x,y,fill=regionEst))+
+   scale_fill_gradient2(low="blue",midpoint=midVal,high="red")+
+  ggtitle("Simple Tree Estimates")+
+  guides(fill=F)
+gg.est
+```
+
+Compare with the original regions? Not too bad. 
+```{r}
+library(gridExtra)
+grid.arrange(gg.data,gg.est,nrow=1)
+```
+
+
+One could easily continue the subdivisions
+##2 Quick task
+Compute the split on the upper left region...here's a start
+
+```{r}
+data.df2<-data.df %>% 
+  filter(regionVal==3)
+##check..
+rangeX <- with(data.df2, range(x))
+rangeY <- with(data.df2, range(y))
+## etc...
+```
+Now use the logic above to find the split in this region. Compare resulting MSE to the previous results. 
+
+##1 Build regression tree using R's tree function
+
+
+Of course, R can do this. Here's the syntax for the tree command. 
+
+Note: rpart is also a good option.
+
+Below, tree control determines how far to continue the branching process. A small value of mindev will create a large tree.
+```{r}
+mod.tree <- tree(z~x+y,
+              data=data.df,
+              control=tree.control(nrow(data.df),
+                                   mindev=0.01)) #the smaller you make mindev the larger the tree you get, this is a good way to tell the model to stop making cuts and adding to the tree
+
+```
+
+
+```{r}
+mod.tree
+```
+
+
+A plot of the tree...pretty basic plot
+```{r}
+plot(mod.tree)
+text(mod.tree,pretty=0)
+```
+
+Compare these splits with our values.
+```{r}
+splitVal1
+splitVal2
+splitVal3
+```
+
+
+Pull off the predictions
+```{r}
+preds <- predict(mod.tree)
+data.df$pred.tree <- preds
+```
+
+Build a plot of this tree.
+```{r}
+
+gg.tree2 <- ggplot(data.df)+
+    geom_tile(aes(x,y,fill=pred.tree))+
+    scale_fill_gradient2(low="blue",midpoint=2.5,high="red")+
+    ggtitle("Predicted Regions")+
+    guides(fill=FALSE)
+gg.tree2
+
+```
+
+Redo everything with an exceptionally small mindev, say mindiv=0.00001.
+
+Put mindev back at .01
+
+##2 Tree evaluation
+
+MSE for this tree. It looks pretty good.
+```{r}
+(mse.tree <- with(data.df,mean( (z-pred.tree)^2)))
+```
+
+
+Compare with linear model mse.
+```{r}
+c(mse.lm,mse.tree)
+```
+
+
+
+##2 Overfitting
+
+What about overfitting...how does this tree perform on new data?
+
+
+Let's generate some test data using the same data model
+```{r}
+vals <- expand.grid(seq(0,10,.25),seq(0,10,.25))
+R3 <- vals[vals[,1]<x1 & vals[,2]<y1,]
+R2 <- vals[vals[,1]>=x1 & vals[,2]<y1,]
+R5 <- vals[vals[,1]<x2 & vals[,2]>=y1 & vals[,2]<y2,]
+R1 <- vals[vals[,1]>=x2 & vals[,2]>=y1,]
+R4 <- vals[vals[,1]<x2 & vals[,2]>=y2,]
+```
+
+
+Check,,
+```{r}
+nrow(R1)+nrow(R2)+nrow(R3)+nrow(R4)+nrow(R5)
+
+regs.df <- data.frame(row=c(as.numeric(row.names(R1)),
+      as.numeric(row.names(R2)),
+      as.numeric(row.names(R3)),
+      as.numeric(row.names(R4)),
+      as.numeric(row.names(R5))),
+      region=c(rep(1,nrow(R1)),
+               rep(2,nrow(R2)),
+               rep(3,nrow(R3)),
+               rep(4,nrow(R4)),
+               rep(5,nrow(R5)))
+      )%>%
+    group_by(region)%>%
+    mutate(n=n())%>%
+    mutate(z=rnorm(n,mu[region],3))%>%
+    dplyr::select(-n)
+
+
+
+test.df <- data.frame(row=1:nrow(vals),x=vals[,1],y=vals[,2])%>%
+    inner_join(regs.df)
+head(test.df)
+
+```
+
+
+Make predictions...
+```{r}
+test.df$pred.tree <- predict(mod.tree,newdata=test.df)
+```
+
+
+Compute MSE and compare...
+```{r}
+(mse.tree.test <- with(test.df,mean( (z-pred.tree)^2)))
+```
+
+
+recall..
+```{r}
+c(mse.lm,mse.tree,mse.tree.test)
+```
+
+Pretty bad.
+
+
+#2 Cross validation and Pruning.
+As expected, the MSE for the test data is larger than for the
+training data. Trees tend to over-fit the data, often to the
+extreme.
+
+We'd like to find the optimal sized tree to get good predictions
+without overfitting.
+The tree function has a built-in cross=validation to help determine
+the optimal trees size
+
+```{r}
+tree.cv <- cv.tree(mod.tree)
+plot(tree.cv$size,tree.cv$dev)
+```
+
+
+There's not much more to do here given this very simple tree
+
+##A more complex example
+Here's some crazy data...
+```{r}
+xyvals <-expand.grid(seq(-5,5,by=.25),seq(-5,5,by=.25))
+zvals <- apply(xyvals,1,
+               function(ls) 
+                 sin(.2*(floor(ls[1])^2+floor(ls[2])))+rnorm(1,0,1))
+data.df <- data.frame(x=xyvals[,1],y=xyvals[,2],z=zvals)
+```
+
+
+
+Plot
+```{r}
+ggplot()+
+    geom_tile(data=data.df,aes(x,y,fill=z))+
+    scale_fill_gradient2(low="blue",mid="white",high="red")
+
+```
+
+
+Build a bigish tree. We can control the minimum stopping value using the control
+parameter. Here we change it to 0.001 vs the defaul 0.01
+```{r}
+mod.tree2 <- tree(z~x+y,
+              data=data.df,
+              control=tree.control(nobs=nrow(data.df),
+                                   mindev=0.001))
+```
+
+
+This is a mess
+```{r}
+plot(mod.tree2)
+text(mod.tree2,pretty=0)
+```
+
+
+Cross validate and evaulate mse
+```{r}
+tree2.cv <- cv.tree(mod.tree2)
+plot(tree2.cv)
+```
+Looks as if we minimize the deviance around size=12 or so.
+
+Prune the tree.
+```{r}
+mod.tree2.prune <- prune.tree(mod.tree2,best=12)
+plot(mod.tree2.prune)
+text(mod.tree2.prune,pretty=1)
+```
+
+
+Generate some test data.
+```{r}
+xyvals <-expand.grid(seq(-5,5,by=.25),seq(-5,5,by=.25))
+zvals <- apply(xyvals,1,function(ls) sin(.2*(floor(ls[1])^2+floor(ls[2])))+rnorm(1,0,1))
+test.df <- data.frame(x=xyvals[,1],y=xyvals[,2],z=zvals)
+
+
+```
+
+Make test predictions on both the original tree and the pruned tree.
+```{r}
+pred2 <- predict(mod.tree2,newdata=test.df)
+pred3 <- predict(mod.tree2.prune,newdata=test.df)
+
+```
+
+The predictions can be quite different. 
+```{r}
+plot(pred2,pred3)
+```
+
+Evaluate on both trees
+```{r}
+with(test.df,mean((z-pred2)^2))
+with(test.df,mean((z-pred3)^2))
+```
+
+The simpler tree performed slightly better (here).
+
+
+## 2 Assignment
+Consider the dataset in Prostate.csv (tab separated) with lpsa as the response variable.  The dataset contains a field indicating train/test. Separate out the data.df (a training set) and validate.df (a testing set).
+
+```{r}
+library(FNN)
+```
+
+
+```{r}
+prostate.df <- read.csv("~/ADM/Prostate.csv",row.names = 1, sep = "\t")
+with(prostate.df,table(train))
+names(prostate.df)
+data.df<-prostate.df %>% 
+  filter(train)
+validate.df<-prostate.df %>% 
+  filter(!train)
+
+
+```
+
+* Part 1: Build a maximal tree on data.df and then use cv.tree  to get an estimate of the optimial tree size.
+
+```{r}
+max.tree<-tree(lpsa ~ ., data=data.df,
+             control=tree.control(nrow(data.df),minsize=1))
+##Hard to see what is going on
+plot(max.tree)
+text(max.tree,pretty=0)
+##
+plot(cv.tree(max.tree))
+
+## Number of terminal leaves...look at max.tree$frame$var. The terminal leaves have
+## have the value var
+str(max.tree$frame$var)
+sum(max.tree$frame$var=="<leaf>")
+```
+
+* Part 2: Use the train/test data set to manually search for the optimal tree size. Prune the tree back one leaf at the time and estimate the mse errors for both train and test. Note: use minsize=1 to get a (close to) maximal tree.
+
+
+```{r}
+tree_cv <- function(df, size) {
+  df <- as.data.frame(data.df)
+  size <- 1
+  kfolds <- 5
+  folds <-sample(1:kfolds,ncol(df),rep=T)
+  mseCV <- numeric(kfolds)
+  for(f in 1:kfolds){
+    train <- df[folds != f]
+    test <- df[folds == f]
+    mod.tree <- tree(lpsa ~ ., data = df, control = tree.control(nrow(df), minsize = size))
+    pred <- predict(mod.tree)
+    mseCV[f] <- mean((pred-df$lpsa)^2)
+    
+  }
+  mean(mseCV)
+}
+```
+
+```{r}
+sizes <- 1:20
+stuff <- tibble(cuts = sizes, mse = sizes)
+for(i in sizes){
+  mse <- tree_cv(data.df,1)
+  stuff[i, 2] = mse
+}
+```
+
+
+* Part 3: Use the prune.tree function to "prune" the tree to smaller sizes (determined by the number of terminal leaves. For each smaller tree size, use cross-validation on data.df to estimate the mse error.  Also, for each tree size,  calculate the training error (using data.df) and the validation error (using validate.df).
+Use these to construct an analog of Figure 8.5 (error bars are optional).
+ Do you see  similar shapes of the graphs?cars)
+
+```{r}
+mod.tree <- tree(z~x+y,
+              data=data.df,
+              control=tree.control(nrow(data.df),
+                                   mindev=0.01))
+```
+
+
+
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
