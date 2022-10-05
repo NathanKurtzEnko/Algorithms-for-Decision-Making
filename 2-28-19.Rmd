@@ -1,0 +1,510 @@
+---
+title: "2-28-19"
+author: "Nathan Kurtz-Enko"
+date: "2/28/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache = TRUE)
+```
+KNN Regression
+
+Use KNN regression and
+investigate its flexiblity and impact on MSE
+
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(FNN) ##for knn.reg
+
+```
+
+
+#Introduction
+We will show how to use KKN regression and then investigate howchanging the flexibility impacts the MSE. We had a rudimentry KNN regression for 1-dimensional input data. Here, we will use it on higher dimensional data.
+
+
+#Set up
+Just to get started...
+Create a simple model function and add noise. In this case, we'l create a large number of data points to represent the "population."
+
+```{r}
+f<-function(x) x+sin(3*x)
+N <- 10000
+dx <- pi/N
+sd <- 1.25
+x <- runif(N,0,pi)
+y <- f(x)+rnorm(N,0,sd)
+```
+
+
+
+As always, put into a data frame and plot.
+```{r}
+data.df0 <- data.frame(x,y)
+ggplot(data.df0,aes(x,y))+
+    geom_point()+
+    ggtitle("Model+noise")
+
+```
+
+
+
+Pull out a training set.
+
+```{r}
+numTrain <- 50
+train <- sample(1:N,numTrain,rep=F)
+train.df <- data.df0[train,]
+
+
+```
+
+
+Plot the training set.
+```{r}
+ggplot(train.df,aes(x,y))+
+    geom_point(color="blue")+
+    ggtitle("Training data")
+
+```
+
+
+
+#KNN on Training data
+
+Setup for KNN
+Predict on training data...here's how we  have to do it.
+
+```{r}
+xdat <- with(train.df,x)
+ydat <- with(train.df,y)
+```
+
+
+
+Number of neighbors to use
+kval=1 highest flexibility
+note: k=2 doesn't work for reasons I don't understand.
+
+```{r}
+kval <- 3
+```
+
+
+Need to convert this to a matrix to use knn.reg
+```{r}
+train.dat <- matrix(xdat,ncol=1)
+resp.dat <- matrix(ydat,ncol=1)
+
+mod.knn<- knn.reg(train.dat,test=train.dat,resp.dat,k=kval)
+```
+
+The structure mod.knn not only constains the predicted values, it also has a lot of other information.
+```{r}
+str(mod.knn)
+```
+
+
+Put the predictions in the train.df data frame. They live in mod.knn$pred.
+
+```{r}
+train.df <- train.df%>%
+    mutate(pred=mod.knn$pred)
+
+```
+
+Plot the KNN results.
+
+```{r}
+gg.train <- ggplot(train.df,aes(x,y))+
+    geom_point(color="blue")+
+    geom_step(aes(x,pred),color="red",size=1)+
+    ggtitle(sprintf("Train Data Fit KNN with k=%s",kval))
+gg.train
+
+```
+
+
+
+Change the number of nearest neighbors...what do you see?
+
+
+
+#Train KNN and use on test data
+
+Now create some test data (note: potentially some overlap with
+training data).
+
+```{r}
+numTest <- 100
+test.df <-  data.df0[sample(1:N,numTest,rep=F),]
+
+```
+
+
+As always, plot it.
+```{r}
+ggplot(test.df,aes(x,y))+
+    geom_point()+
+    ggtitle("Testing data")
+
+```
+
+
+Set up for KNN
+```{r}
+test.dat <- test.df$x
+test.dat <- matrix(test.dat,ncol=1)
+```
+
+
+Run the model
+```{r}
+mod.knn<- knn.reg(train.dat,test=test.dat,resp.dat,k=kval)
+
+```
+
+
+Add predictions to test.df data frame.
+```{r}
+test.df <- test.df%>%
+    mutate(pred=mod.knn$pred)
+
+```
+
+
+Now look at the predictions on the test data
+```{r}
+gg.test <- ggplot(test.df,aes(x,y))+
+    geom_point(color="blue")+
+    geom_step(aes(x,pred),color="red",size=1)+
+    ggtitle(sprintf("Test Data Fit KNN with k=%s",kval))
+gg.test
+```
+
+Plot both the train and test results.
+```{r}
+library(gridExtra)
+grid.arrange(gg.train,gg.test)
+```
+
+
+Go back to the training data,  change kval...how does the train/test
+graphs compare??
+
+
+#Mean squared error comparision
+Compute the MSE for both the training and testing cases
+```{r}
+mse.train <- with(train.df,mean((y-pred)^2))
+mse.train
+
+mse.test <- with(test.df,mean((y-pred)^2))
+mse.test
+
+
+```
+
+
+As is almost always the case, the training error is much lower
+than testing error
+```{r}
+c(mse.train,mse.test)
+```
+
+## Higher dimensional case
+
+KNN performs best with a low number of predictors. Compared with linear regression, it tends to be a better model if the underlying data is linear in the predictor set. 
+
+Below you can compare knn.reg vs lm as 1) the number of predictors changes and 2) the underlying model goes from linear to non linear.
+
+```{r}
+##Number of predictors
+p<-2
+## A random vector to use in a dot product
+dotP<-sample(-10:10,p,rep=T)
+
+## Three different functions. The first is linear, the other two
+## are pretty non linear.
+f.lin<-function(x) 2+sum(x*dotP)
+f.nonlin1<-function(x) 2+sum(x*dotP)+sum(x^2*dotP)
+f.nonlin2<-function(x){
+  val<-2+sum(x*dotP)
+  if(val<0)
+    return(-1)
+  else
+    return(1)
+}
+
+## Pick one
+f<-f.lin
+
+## Data set size
+N<-100
+train.dat<-matrix(runif(p*N,0,5),ncol=p)
+train.y<-apply(train.dat,1,f)+rnorm(N,0,.5)
+
+
+### Getting loose on the knn. Predict the training data
+kval<-7
+mod.knn<-knn.reg(train.dat,train.dat,train.y,k=kval)
+pred.knn<-mod.knn$pred
+##How'd we do?
+(err.knn<-mean((train.y-pred.knn)^2))
+
+##Look at a bunch of values of kval.
+maxK<-100
+kVals<-1:maxK
+errs<-numeric(maxK)
+for(kval in kVals){
+  mod.knn<-knn.reg(train.dat,train.dat,train.y,k=kval)
+  errs[kval]<-mean((train.y-mod.knn$pred)^2)
+}
+## As expected.
+
+data.frame(k=kVals,err=errs) %>% 
+  ggplot()+
+  geom_point(aes(k,err),color="blue")+
+    geom_line(aes(k,err),color="blue")
+
+
+## Now use a linear model. It's safer to use a data frame
+## with lm
+train.df<-data.frame(train.dat,y=train.y)
+##fix the names
+names(train.df)[1:p]<-paste0("X",1:p)
+
+
+## Build the model
+mod.lm<-lm(y~.,data=train.df)
+
+## What do we have??
+summary(mod.lm)
+
+## Do the prediction
+pred.lm<-predict(mod.lm)
+##Error
+(err.lm<-with(train.df,mean((y-pred.lm)^2)))
+
+##Ok...now build a testing data set with the same
+## structure as the training daga
+test.dat<-matrix(runif(p*N,0,pi),ncol=p)
+test.y<-apply(test.dat,1,f)+ rnorm(N,0,0.5)
+## Data frame
+test.df<-data.frame(test.dat,y=test.y)
+names(test.df)[1:p]<-paste0("X",1:p)
+
+## Getting started...
+mod.knn<-knn.reg(train.dat,test.dat,train.y,k=kval)
+test.df$pred.knn<-mod.knn$pred
+(err.knn<-with(test.df,mean((y-pred.knn)^2)))
+
+
+### Train and Test with many kvals.
+maxK<-N
+kVals<-1:maxK
+errs<-numeric(maxK)
+for(kval in kVals){
+  mod.knn<-knn.reg(train.dat,test.dat,train.y,k=kval)
+  errs[kval]<-mean((test.y-mod.knn$pred)^2)
+}
+
+##Plot it.
+data.frame(k=kVals,err=errs) %>% 
+  ggplot()+
+  geom_point(aes(k,err),color="blue")+
+    geom_line(aes(k,err),color="blue")
+
+
+## Extract the optimal value of k.
+## Here's one way....
+(kBest<-which.min(errs))
+err.knn<-errs[kBest]
+##Build the model with the best k
+mod.knn<-knn.reg(train.dat,test.dat,train.y,k=kBest)
+test.df$pred.knn<-mod.knn$pred
+
+
+
+## Now use the linear model
+test.df$pred.lm<-predict(mod.lm,newdata=test.df)
+
+##Comparison...
+with(test.df,mean((y-pred.lm)^2))
+with(test.df,mean((y-pred.knn)^2))
+
+##A look at the correlation between the actual and predicted values
+test.df %>% 
+  gather(type,pred,pred.knn:pred.lm) %>% 
+  ggplot()+
+  geom_point(aes(y,pred))+
+  facet_wrap(~type)
+
+
+```
+
+
+## Assignment
+Explore and discuss the efficacy of KNN vs Linear Regression using the framework above. In particular, discuss the relationship between
+these two methods as:
+
+* The number of predictors (p) grows
+* The underlying model is linear vs non-linear.
+* The size of the data sets changes
+
+I provide you with some examples of underlying functions, especially nonlinear functions. It is recommended that you create at least one non-linear function of your own to use in your analysis.
+
+Key question: Are there situations when you would recommend using KNN vs LM (or vice versa)? 
+
+Write this up in a self-contained RMarkdown document. 
+
+
+```{r}
+#how many predictors
+p <- 2:10
+p_act <- sample(p, 1)
+  
+#A vector to help quickly create our linear function
+dotP <- sample(-10:10,p,rep=T)
+
+#lets define some functions for modeling
+f1 <- function(x){
+  sum(dotP*x)
+}
+f2 <- function(x){
+  11+sum(x^2*dotP)
+}
+f3 <- function(x){
+  42+sume(x^3*dotP)
+}
+```
+
+```{r}
+#lets choose which function to use
+our_func <- str_c("f", sample(1:3, 1))
+
+#how many points in the data
+n <- 100
+
+#lets create some training data then
+train.xi <- matrix(runif(p_act*n, 0, 7), ncol = p_act) #for the max and min here, choose any numbers, it doesn't really matter
+train.y <- apply(train.xi, 1, our_func) + rnorm(n, 0, 1)
+```
+
+```{r}
+#lets do knn predictions just to test some stuff
+### Getting loose on the knn. Predict the training data
+kval<-7 #choose any random number here for now
+mod.knn<-knn.reg(train.xi,train.xi,train.y,k=kval)
+pred.knn<-mod.knn$pred
+##How'd we do?
+(err.knn<-mean((train.y-pred.knn)^2))
+```
+
+```{r}
+#lets create some testing data
+test.xi <- matrix(runif(p_act*n, 0, 7), ncol = p_act)
+
+#lets make predictions on our test data using training data
+test.knn <- knn.reg(train.xi, test.xi, train.y, k = kval)
+test.pred.knn <- test.knn$pred
+
+#how is the test error
+test.err.knn <- mean((train.y-test.pred.knn)^2)
+```
+
+```{r}
+#lets test over a bunch of kvals
+##Look at a bunch of values of kval.
+maxK<-100
+kval_range <- 1:maxK
+errs<-numeric(maxK)
+for(k in kval_range){
+  mod.knn<-knn.reg(test.xi,train.xi,train.y,k=k)
+  errs[k]<-mean((train.y-mod.knn$pred)^2)
+}
+
+best_k_index <- which.min(errs)
+best_k <- kval_range[best_k_index]
+```
+
+```{r}
+#lets find the error with our best value of k
+test.best.val.k <- knn.reg(train.xi, test.xi, train.y, k = best_k)
+test.best.val.k.pred <- test.best.val.k$pred
+
+test.best.val.k.err <- mean((train.y-test.best.val.k.pred)^2)
+test.best.val.k.err #this is still pretty bad
+```
+
+```{r}
+#Now lets start doing some linear modeling stuff
+#first put things into a data frame so all info can be accessed when using lm()
+train.df<-data.frame(train.xi,y=train.y)
+##fix the names
+names(train.df)[1:p_act]<-paste0("X",1:p_act)
+#next make the model and make predictions
+lin.mod <- lm(y~., data = train.df)
+predictions.lin.mod <- predict(lin.mod)
+
+#lets find our error
+train.lin.mod.err <- mean((train.y-predictions.lin.mod)^2)
+train.lin.mod.err
+```
+
+```{r}
+#lets do this with our test data
+test.df <- data.frame(test.xi)
+names(test.df)[1:p_act] <- paste0("X", 1:p_act)
+
+test.pred.lin.mod <- predict(lin.mod, newdata = test.df)
+
+test.lin.mod.err <- mean((train.y-test.pred.lin.mod)^2)
+test.lin.mod.err # this is even worse
+```
+
+```{r, error=TRUE}
+#lets do all of this for a variety of input values and record the errors into a tibble and plot
+err_for_lm_KNN <- tibble(value_p = 1:15, err_lm = 1:15, err_knn = 1:15)
+for(i in 1:15){
+  train.xi <- matrix(runif(i*n, 0, 7), ncol = i) #for the max and min here, choose any numbers, it doesn't really matter
+  train.y <- apply(train.xi, 1, our_func) + rnorm(n, 0, 1)
+  train.df <- data.frame(train.xi, y = train.y)
+  names(train.df)[1:i] <- paste0("X", 1:i)
+  test.xi <- matrix(runif(i*n, 0,7), ncol = i)
+  test.df <- data.frame(test.xi)
+  names(test.df)[1:i] <- paste0("X", 1:i)
+  maxK<-100
+  kval_range <- 1:maxK
+  errs<-numeric(maxK)
+  for(k in kval_range){
+    mod.knn<-knn.reg(test.xi,train.xi,train.y,k=k)
+    errs[k]<-mean((train.y-mod.knn$pred)^2)
+  }
+  best_k_index <- which.min(errs)
+  best_k <- kval_range[best_k_index]
+  test.best.val.k <- knn.reg(train.xi, test.xi, train.y, k = best_k)
+  test.best.val.k.pred <- test.best.val.k$pred
+  test.best.val.k.err <- mean((train.y-test.best.val.k.pred)^2)
+  err_for_lm_KNN[i,2] = test.best.val.k.err
+  lin.mod <- lm(y~., data = train.df)
+  test.pred.lin.mod <- predict(lin.mod, newdata = test.df)
+  test.lin.mod.err <- mean((train.y-test.pred.lin.mod)^2)
+  err_for_lm_KNN[i,3] = test.lin.mod.err
+}
+```
+
+```{r}
+#lets plot this
+ggplot(data = err_for_lm_KNN)+
+  geom_point(aes(x = value_p, y = err_lm), color = "red")+
+  geom_line(aes(x = value_p, y = err_lm), color = "red")+
+  geom_point(aes(x = value_p, y = err_knn), color = "blue")+
+  geom_line(aes(x = value_p, y = err_knn), color = "blue")+
+  ggtitle("MSE for input values: red = lm, blue = knn")+
+  ylab("mse")+
+  xlab("number of inputs")
+```
+

@@ -1,0 +1,436 @@
+---
+title: "3-7-19"
+author: "Nathan Kurtz-Enko"
+date: "3/7/2019"
+output: pdf_document
+---
+```{r, include=FALSE}
+library(tidyverse)
+library(dplyr)
+```
+
+```{r}
+############################################
+## Build some data using linear algebra
+#######################################################
+
+N<-50
+x<-rnorm(N,0,2)
+y<-rnorm(N,0,2)
+
+X<-matrix(c(x,y),byrow=F,ncol=2)
+```
+
+```{r}
+##Pack into a data frame
+data.df <- data.frame(x,y)
+
+#######################################################
+data.df %>%  
+    ggplot()+
+    geom_point(aes(x,y),color="red")+
+    ##aspect ratio = 1
+    coord_fixed()
+    
+
+```
+############################################
+
+```{r}
+## Define a direction
+vec <- c(1,2)
+## Normalize
+len2 <- sqrt(sum(vec^2))
+vec <- vec/len2
+##new vector, unit length
+vec
+sum(vec^2)
+
+```
+
+
+```{r}
+#################################
+## Add it to the plot
+data.df %>% 
+    ggplot()+
+    geom_point(aes(x,y),color="red")+
+    geom_abline(slope=vec[2]/vec[1],intercept=0,color="blue")+
+    coord_fixed()
+    
+```
+
+```{r}
+############################################
+## Compute the projections of the X points onto vec
+proj2Vec<-(X %*% vec)
+##Take a peek
+head(proj2Vec)
+
+
+## vec coords of the projections
+vx <- proj2Vec*vec[1]
+vy <- proj2Vec*vec[2]
+
+
+##Pack into a data frame
+##dataV.df <- data.frame(v1,v2)
+data.df$vx <- vx
+data.df$vy <- vy
+```
+
+```{r}
+data.df %>% 
+    ggplot()+
+    geom_point(aes(x,y),color="red")+
+    geom_abline(slope=vec[2]/vec[1],intercept=0,color="blue")+
+    geom_point(aes(vx,vy),color="darkgreen",size=2)+
+    coord_fixed()
+
+```
+ 
+```{r} 
+ #######################################################
+## Add in the projection vectors, these should be perpendicular
+## to vec
+data.df %>% 
+    ggplot()+
+    geom_point(aes(x,y),color="red")+
+    geom_abline(slope=vec[2]/vec[1],intercept=0,color="blue")+
+    geom_point(aes(vx,vy),color="darkgreen",size=2)+
+    geom_segment(aes(x,xend=vx,y,yend=vy))+    
+    coord_fixed()
+
+```
+
+```{r}
+############################################################
+## Build a synthetic model using this information
+##
+## Plan: Points far from separation line have high probability of
+## being in the class, close to the line, prob is near 0.5, the longer the line, the higher the probability a point will be in 
+
+
+## Calculate which side of the line each point is on +/- 1 indicates above/below
+class0 <- sign(X %*% c(vec[2],-vec[1]))
+data.df$class0 <- class0[,1]
+
+
+
+## Add a row id for grouping
+data.df$id <- 1:nrow(data.df)
+## d is in the range (0, infinity). Use arctan to map it to finite range.
+
+##scale factgor
+alpha <- 2
+data.df <- data.df %>%
+    group_by(id) %>%
+    mutate(d=sqrt( (x-vx)^2+(y-vy)^2),
+           prob=2/pi*atan(alpha*d)) %>% 
+    mutate(class=ifelse(class0 == 1,
+                        sample(c("A","B"),1,prob=c(prob,1-prob)),
+                        sample(c("B","A"),1,prob=c(prob,1-prob))))
+```
+
+```{r}
+#######################################################
+## How's it look...changing alpha->0 will "blur" the class boundary
+data.df %>% 
+    ggplot()+
+    geom_point(aes(x,y,color=class))+
+    scale_color_manual(values=c("red","blue"))+
+    coord_fixed()
+
+```
+
+```{r}
+#######################################################
+## Use linear regression on the classes. Build a  model for each
+## class.
+##
+## Create an indicator variable for each class
+data.df <- data.df %>% 
+    mutate(classA=1.*(class=="A"),
+           classB=1.*(class=="B"))
+    
+##What just happened?
+with(data.df, table(class,classA))
+with(data.df, table(class,classB))
+
+modA <- lm(classA ~ x+y,data=data.df)
+modB <- lm(classB ~ x+y,data=data.df)
+
+
+### Predict on the classes. The predicted values doesn't have
+## any extrensic meaning
+predA <- predict(modA,newdata=data.df)
+predB <- predict(modB,newdata=data.df)
+
+
+data.df <- data.df %>%
+    dplyr::select(-predA)
+
+##Classification rule.....
+data.df$predA <- predA >  predB
+
+data.df <- data.df %>%
+    mutate(classPred=ifelse(predA,"A","B"))
+
+##How'd we do??
+with(data.df,table(class,classPred))
+
+```
+
+```{r}
+#######################################################
+## The test here is a discriminant function
+discr <- function(x,y){
+    predA <- predict(modA,newdata=data.frame(x,y))
+    predB <- predict(modB,newdata=data.frame(x,y))
+    predA-predB
+}
+
+
+```
+
+```{r}
+#######################################################
+## Add a grid..
+xvals <- seq(-5,5,by=.1)
+yvals <- seq(-5,5,by=.1)
+grid.xy <- expand.grid(xvals,yvals)
+
+##There are much better ways to do this....
+dVals <- apply(grid.xy,1,function(ls) discr(ls[1],ls[2]))
+
+
+##Add the values and display
+grid.df <- data.frame(x=grid.xy[,1],
+                      y=grid.xy[,2],
+                      discr=dVals)
+
+## Here's the grid.
+grid.df %>%
+    ggplot()+
+    geom_tile(aes(x,y,fill=discr))+
+    scale_fill_gradient2(low="blue",high="red",mid="white")+
+    geom_contour(aes(x,y,z=discr),breaks=c(0.0))+
+    geom_point(data=data.df,aes(x,y,color=class))+
+    scale_color_manual(values=c("red","blue"))+
+    coord_fixed()
+##Kinda nice.    
+
+
+### What happens if you add higher order terms to the linear models
+### (i.e. I(x^2) etc
+```
+
+
+##############################################
+##############################################
+##############################################
+
+
+
+#Build your own linear classifier
+Build your own classifier: Section 4.2 ESL (pages 103-104)
+Steps:
+
+ * Build an N x K matrix $Y$. $Y_{n,l}=1$ exactly when the
+$n^{th}$ sample is in class $k\in \{1,2,3}\$.
+
+ * Use ordinary linear regression to build $K$ separate linear models
+$f_k(x)$. $f_k$ predicts the $k^{th}$ column of $Y$.
+
+ *  Classify $x$ in class $k_0$ where $k_0$ is the index of the largest value $f_k(x)$, $k=1,2,\dots K$.
+ 
+ * Build your own such a way that you can compare directly (and easily with lda, qda, or KNN.
+
+
+Standard libraries
+```{r}
+library(MASS)
+library(tidyverse)
+library(class)
+
+```
+
+
+
+Build a simple model with  K=3 classes. Use multivariate normals
+with 3 different means. The choice of means is arbitrary.
+```{r}
+mu1 <- c(1,1)
+mu2 <- c(0,0)
+mu3 <- c(-2,1)
+
+```
+
+
+Covariance matrix
+This parameter will control the spread in the class sets
+```{r}
+ss <- 5
+```
+
+
+Thes parameters control for the "oblongness"...the more these differ, the more oblong the data are.
+```{r}
+s11 <- 1
+s22 <- 4
+S <- matrix(c(s11,0.5,0.5,s22),nrow=2)/ss
+
+
+```
+
+
+Number of sample points in each class and the total number of
+points.
+```{r}
+N1 <- N2 <- N3 <- 50
+N <- N1+N2+N3
+
+
+```
+
+
+Now....the data
+```{r}
+X1 <- mvrnorm(N1,mu1,S)
+X2 <- mvrnorm(N2,mu2,S)
+X3 <- mvrnorm(N3,mu3,S)
+X <- rbind(X1,X2,X3)
+```
+
+
+Put all the data into  a data frame.
+```{r}
+data.df <- data.frame(X,class=factor(c(rep(1,N1),
+                                rep(2,N2),
+                                rep(3,N3))))
+names(data.df)[1:2] <- c("x1","x2")
+
+X
+```
+
+
+Here's what it looks like
+```{r}
+ggplot(data.df)+
+    geom_point(aes(x1,x2,color=class))+
+    ggtitle("Data with K=3 classes")
+
+```
+
+
+
+Now you are ready to apply the Linear Classifier ideas from ESL.
+First you need to build the matrix $Y$ and then build models on
+each response column. 
+
+For your classification scheme, generate a
+grid graph. As well, compare your classifcation to the the LDA
+classification. Any differences??
+
+
+
+Recall: Show classification regions on grid.
+Build a classification plot using LDA.
+
+```{r}
+mod.lda <- lda(class~x1+x2,data=data.df)
+str(mod.lda)
+
+```
+
+
+Make a plotting grid in x and y
+```{r}
+gridSize <- 25
+```
+
+
+Span the data
+```{r}
+x.vals0<-with(data.df,seq(min(x1),max(x1),length=gridSize))
+y.vals0<-with(data.df,seq(min(x2),max(x2),length=gridSize))
+
+grid.df <- expand.grid(x.vals0,y.vals0) #expand.grid does all combinations of data points
+names(grid.df) <- c("x1","x2")
+
+
+```
+
+
+Assign prediction values to the grid locations. This step depends
+on the prediction method.
+```{r}
+pred  <- predict(mod.lda,newdata=grid.df)
+grid.df$pred.lda <- pred$class
+
+```
+
+
+Take a peek...
+```{r}
+with(grid.df,table(pred.lda))
+
+```
+
+
+Make predictions for grid xy vals
+```{r}
+grid.gg <- ggplot()+
+  geom_point(data=data.df,aes(x1,x2,color=class),size=2)+
+    geom_tile(data=grid.df,aes(x1,x2,fill=factor(pred.lda)),
+              alpha=0.16)+
+    scale_fill_brewer(palette="Set1")+
+    scale_color_brewer(palette="Set1")+
+    coord_fixed()+
+    ggtitle("Linear Classification with LDA")+
+    guides(fill=F)
+grid.gg
+
+```
+
+
+
+Approach 2 (second half of ESL page 104). Treat classes as
+quantitative values and build a linear model prediction
+model. Classification a new point be assigning to the closest value in the set $1,2,\dots K$.
+
+The claim is that this is identical to the previous
+approach. Provide compelling computational evidences for this
+claim.
+
+
+Figure 4.2 (page 105) compares this simplistic linear
+classification to LDA. In this case, there are three classes that
+are completely separate. Create a synthetic scenario that
+reproduces the situation illustrated in Figure 4.2.
+
+Take a shot at Figure 4.3.
+
+
+
+# Nonlinear classification.
+There is train and test data in the files. Again, we are looking at
+K=3 classes.
+
+* NonlinearDataTrain.csv
+* NonlinearDataTest.csv
+
+Use the training data to build one or more models to classify this data. Feel free to use KNN, LDA, or QDA. 
+
+As defined,  Logistic Regression only
+only works for two classes. Can you modify it to make predictions
+on the classes?
+
+Which model works best on the test data?
+
+```{r}
+data.df <- read.csv("NonlinearDataTrain.csv")
+head(data.df)
+mod.log <- glm(cat ~ x+y, family="binomial", data=data.df)
+```
+

@@ -1,0 +1,453 @@
+---
+title: "2-21-19_2.Rmd"
+author: "Nathan Kurtz-Enko"
+date: "2/23/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE,cache = TRUE)
+```
+
+# Introduction
+Our goal is to reconstruct some of the figures in Chapter 2 of ESL. We are particularly interested in Figures 2.13, 2.15, and 2.17.
+
+
+Along the way, we will use the K-nearest neighbor model and also consider what is meant by a Bayes Classifier. 
+
+Always load tidyverse.
+```{r,message=FALSE}
+library(tidyverse)
+```
+
+These are helpful as well. The class packagea contains the  knn function we will be using.
+```{r,message=FALSE}
+library(class) ##for knn function
+library(MASS) ##for mvnorm
+library(gridExtra) # for grid.arrange
+library(BayesFactor)
+```
+
+
+# Bayes Classifier
+The general plan is to  greate a **synthetic** training data frame for classificaton. To do so, we will randomly create a small (5 or so) means representing the centers of bivariate normal distribuion in the plane. Points from one class will be created as samples from one set of the means, points from the other class will come from a differnt set of means. 
+
+Here we go. Start with multi-(bi-)variate normal means for classes 0 and 1.
+n means at (1,0) and 10 at (-1,0) with sigma=Id
+
+Use a fixed standard deviation for samples. We will assume the multivariante normals have uncorrelated variance matrices. This means they essentially factor as products of one variable normals. 
+```{r}
+sd<- 3*sqrt(1/5)
+```
+Generate the n means. These are randomly selected.
+```{r}
+numMeans <- 4
+# mu0 <- mvrnorm(n,c(0,1),diag(1,2))
+# mu1 <- mvrnorm(n,c(1,0),diag(1,2))
+mu0<-cbind(rnorm(numMeans,1,sd),rnorm(numMeans,1,sd))
+mu1<-cbind(rnorm(numMeans,-1,sd),rnorm(numMeans,-1,sd))
+```
+Package the means into a data frame. (Note: There is a structural difference when numMeans=1 vs numMeans>1)
+```{r}
+    mu.df <-  data.frame(x=c(mu0[,1],mu1[,1]),
+                         y=c(mu0[,2],mu1[,2]),
+                         class=rep(c("0","1"),each=numMeans))
+mu.df
+```
+
+Plot the means
+```{r}
+ggplot()+
+  geom_point(data=mu.df,aes(x,y,color=class),size=4)+
+    scale_color_manual(values=c("red","blue"))+
+    ggtitle(sprintf("Location of class means: n=%s",numMeans))
+
+
+```
+Now the underlying Bayes Classifier.
+
+
+The basic idea here is that a point is equally likely to have come  from any one of the n number of means of a particular class. The "probability" of coming from any one of the bivariate normals is proporational the mean of the  values of the n number of means density functions.
+```{r}
+
+bayesProb <- function(x,y){
+        ##(weighted) prob of coming from class 0 (
+        p0 <- mean(dnorm(x,mu0[,1],sd)*dnorm(y,mu0[,2],sd))
+        ##(weighted) prob of coming from class 1 (
+        p1 <- mean(dnorm(x,mu1[,1],sd)*dnorm(y,mu1[,2],sd))
+        # Actual probability of class 0.
+        p0/(p0+p1)
+}
+bayesProb(0,.1)
+
+
+```
+
+
+Now let's visualize the Bayes Classifier regions
+
+To do so, we build a grid and color to show the region classifications
+
+Pick a grid size and establish the boundaries.
+```{r}
+gridSize <- 50
+regionSize <- 4
+xmin <- ymin <- -regionSize
+xmax <- ymax <- regionSize
+```
+
+To build the grid, use expand.grid. Then package into a data frame (of course).
+```{r}
+xvals <- seq(xmin,xmax,length=gridSize)
+yvals <- seq(ymin,ymax,length=gridSize)
+grid.xy <- expand.grid(xvals,yvals)
+grid.df <- data.frame(x=grid.xy[,1],
+                      y=grid.xy[,2],
+                      ##randomly assign classes...we will do more with
+                      ##these later
+                      class=sample(c("0","1"),rep=T,gridSize*gridSize))
+```
+
+Here's the grid (with random class assignments).
+```{r}
+grid.df %>% 
+  ggplot()+
+  geom_tile(data=grid.df,aes(x,y,fill=class),size=5)+
+  scale_fill_manual(values=c("red","blue"))+
+  theme_bw()
+```
+
+Compute the classification probability at the grid points and then add the bayes classifier probs  to the grid.
+
+Package into a data frame. Note the use of mutate to calculate the values
+on each x,y pair. The data frame needs to be grouped by individual row to prevent mutate from "vectorizing" over the entire list of x or y values. 
+```{r}
+grid.df<-grid.df %>% 
+  mutate(id=row_number())
+
+grid.df<-grid.df %>% 
+group_by(id) %>% 
+  mutate(bayesProb=bayesProb(x,y),
+         bayesClass=ifelse(bayesProb>0.5,"0","1")) %>% 
+  ungroup() 
+with(grid.df,table(bayesClass))
+
+```
+Create the Bayes Classier Regions
+The Bayes decision boundary is shown in black.
+
+```{r}
+gg.bayes <- ggplot()+
+    geom_tile(data=grid.df,aes(x,y,fill=bayesClass),size=5,alpha=.50)+
+    ##this where we compute the decision boundary
+    stat_contour(data=grid.df,aes(x,y,z=bayesProb),breaks=c(.5),size=1,
+                 color="black")+
+    scale_fill_manual(values=c("red","blue"))+
+   ##Add the centers of the generating normals
+    geom_point(data=mu.df,aes(x,y,color=class),size=4)+
+    scale_color_manual(values=c("red", "blue"))+
+    scale_x_continuous(limits=c(xmin,xmax))+
+    ggtitle("Bayes Classifer")+
+    guides(color=FALSE)
+gg.bayes
+
+```
+
+Create the Bayes Classier Regions...
+Basically the same thing, only with the probabilities colored
+proportionally. This give a feel for the strength of the classifier at any point in the plane. 
+
+```{r}
+gg.bayes2 <- ggplot()+
+    geom_tile(data=grid.df,aes(x,y,fill=bayesProb),size=5,alpha=.50)+
+    scale_fill_gradient2(low="red",midpoint=0.5,high="blue")+
+    geom_point(data=mu.df,aes(x,y,color=class),size=4)+
+    scale_color_manual(values=c("red","blue"))+
+    scale_x_continuous(limits=c(xmin,xmax))+
+    ggtitle("Bayes Classifer: ESL Figure 2.5")+
+    guides(color=FALSE)
+gg.bayes2
+
+
+```
+
+# Training Data
+
+Now it's time to build a training data set
+Select N points from the first set of bivariate normal distributios then another N from the other set of bivariate normal distributions. In each case, for each training point, we randomly select one of the `r numMeans` distributions to sample from.
+
+```{r}
+N <- 100 ## pretty big training set
+## Ra
+rndMean <- sample(1:numMeans,N,rep=T) 
+vals0<- t(apply(mu0[rndMean,],1,function(mu) mvrnorm(1,mu,diag(2)*sd)))
+
+rndMean <- sample(1:numMeans,N,rep=T)
+vals1 <- t(apply(mu1[rndMean,],1,function(mu) mvrnorm(1,mu,diag(2)*sd)))
+
+```
+These are the training  points. The first N=`r N` are class "0", the second N=`r N` are in class "1".
+
+Put in a data frame
+```{r}
+vals <- rbind(vals0, vals1)
+train.df <-
+    data.frame(row=1:(2*N),
+               x=vals[,1],
+               y=vals[,2],
+               class=rep(c("0","1"),each=N))
+
+
+
+```
+Plot the data in the plane.
+```{r}
+gg.train <- ggplot(train.df,aes(x,y,color=class))+
+    geom_point(size=1)+
+    scale_color_manual(values=c("red","blue"))+
+  ggtitle("Mixed Gaussian Data--Train")
+gg.train
+
+
+```
+Overlay onto the Bayes Classifier regions.
+
+```{r}
+ggplot()+
+    geom_point(data=train.df,aes(x,y,color=class),size=2)+
+    scale_color_manual(values=c("red","blue"))+
+    geom_tile(data=grid.df,aes(x,y,fill=bayesClass),size=5,alpha=.250)+
+    scale_fill_manual(values=c("red", "blue"))+
+    ggtitle("Bayes Classifier and Training Data: ISLR Figure 2.13")
+```
+You can see the training points that didn't follow the Bayes classification. Some reds snuck into the blue regiona and vice versa.
+# Build KNN model
+
+Now we are ready to do some KNN modling. We will use the R knn function.
+
+To start, we need to set up the data for knn. It's a bit picky about the form the data. 
+
+To start, we will classify the grid values using KNN. We need to be careful about the format of the data that goes into R's knn function.
+
+```{r}
+##pull off the predictor variables
+train.dat <- train.df[c("x","y")]
+str(train.dat)
+##pull off the classification variable
+classes <- with(train.df,class)
+##grid data predictors
+grid.dat <- grid.df[c("x","y")]
+```
+
+
+kval is the number of nearest neighbors to use in KNN
+prob = T means include the computed classification probabilites
+mod.knn is the classification. The robabilities are the proportion in nbhd that correspond to prediction. In other words, how sure we are of the prediction. 0.5 is a coin flip
+
+```{r}
+kval <- 9
+mod.knn <- knn(train.dat,grid.dat,classes,k=kval,prob=T)
+head(mod.knn)
+```
+
+If you want to get to the probabilities, here's how to do it.
+```{r}
+mod.attrs <- attributes(mod.knn)
+with(mod.attrs, hist(prob))
+with(mod.attrs, table(prob))
+
+```
+
+Now add the KNN class predictions and probabibilies to the grid.
+
+```{r}
+grid.df <- grid.df %>%
+    mutate(knnClass=mod.knn,
+           knnProb=mod.attrs$prob)
+
+```
+
+
+## Classification Regions
+How are we doing?? This shows the comparison of the Bayes Classifier with the KNN Classifier.
+```{r}
+gg.knn <- ggplot()+
+    geom_tile(data=grid.df,aes(x,y,fill=knnClass),alpha=.5)+
+    stat_contour(data=grid.df,aes(x,y,z=bayesProb),breaks=c(.5),size=1,color="black")+
+    scale_fill_manual(values=c("red","blue"))+
+    geom_point(data=train.df,aes(x,y,color=class),size=2)+
+    scale_color_manual(values=c("red","blue"))+
+  ggtitle(sprintf("KNN neighbor classification regions (k=%s)",kval))
+gg.knn
+
+
+
+```
+Here we can see how well our KNN classifier compares to the "best case" Bayes classier. It looks pretty good, at least for k1=`r kval`.
+
+
+# Train vs test
+Now we build some  synthetic test data. Do so in the same way we built the training data.
+
+```{r}
+N <- 100 ## same size as training data
+rndMean <- sample(1:numMeans,N,rep=T)
+vals0<- t(apply(mu0[rndMean,],1,function(mu) mvrnorm(1,mu,diag(2)*sd)))
+
+rndMean <- sample(1:numMeans,N,rep=T)
+vals1 <- t(apply(mu1[rndMean,],1,function(mu) mvrnorm(1,mu,diag(2)*sd)))
+vals <- rbind(vals1,vals0)
+test.df <-
+    data.frame(row=1:(2*N),x=vals[,1],y=vals[,2],class=rep(c("A","B"),each=N))
+
+```
+Run through the knn classifier.
+```{r}
+test.dat <- test.df[c("x","y")]
+mod.knn2 <- knn(train.dat,test.dat,classes,k=kval,prob=T)
+test.df <- test.df%>%
+    mutate(knnClass=mod.knn2)
+
+```
+The "confusion matrix" shows how well we did.
+```{r}
+with(test.df,
+     table(class,knnClass))
+
+```
+The test error rate is the proportion of missed classifications in the test data
+```{r}
+(err.test <- with(test.df,mean(!class==knnClass)))
+
+```
+In this case, the proportion of  missclassications is `r err.test`.
+
+We can also predict train data from train data!
+```{r}
+mod.knn3 <- knn(train.dat,train.dat,classes,k=kval,prob=T)
+train.df <- train.df%>%
+    mutate(knnClass=mod.knn3)
+(err.train <- with(train.df,mean(!class==knnClass)))
+
+```
+Compare the error rates. Training error should be smaller than
+testing error.
+```{r}
+c(err.train,err.test)
+
+```
+
+
+# Assignment: Build the figures.
+
+*Goal*: Make a plot of test and training errors as a function of kval
+(the number of nearest neighbors).
+
+
+Here's the the plan.
+* For kval=1...kMax
+   + Generate (multiple) train+test
+   + For each train+test combo, calculate the test error. Take the mean of all         these
+   + Record the mean of the erors
+* Plot the mean of the errors as a function of kval.
+
+
+Here are the steps, taken verbatum from above.
+```{r}
+N <- 100
+kVal <- 30
+```
+
+```{r}
+buildData<-function(N){
+  rndMean <- sample(1:numMeans,N,rep=T)
+  vals0<- t(apply(mu0[rndMean,],1,function(mu) mvrnorm(1,mu,diag(2)*sd)))
+  rndMean <- sample(1:numMeans,N,rep=T)
+  vals1 <- t(apply(mu1[rndMean,],1,function(mu) mvrnorm(1,mu,diag(2)*sd)))
+  vals <- rbind(vals1,vals0)
+  data.frame(row=1:(2*N),x=vals[,1],y=vals[,2],class=rep(c("A","B"),each=N))
+}
+```
+
+Create the training and testing data
+```{r}
+N<-500
+train.df <-buildData(N)
+test.df <-buildData(N)
+```
+
+
+
+These are the stept. Package all this in a function of kval and M.
+```{r}
+calcErr <- function(kval,M){
+    errs <- array(0,M)
+    for(m in 1:M){
+       train.df <-buildData(N)
+       test.df <-buildData(N)
+        ##Build the model and compute the test error
+        mod.knn <-
+            knn(train.df[c("x","y")],
+                test.df[c("x","y")],
+                train.df$class,k=kval,prob=T)
+          errs[m] <- with(test.df,mean(class!=mod.knn))
+    }
+    mean(errs)
+}
+```
+
+Check that it works..
+
+```{r}
+calcErr(1,200)
+```
+This might take a while....
+```{r}
+maxK <- 150
+numReps<-10
+
+kVals<-seq(1,maxK,by=4)
+errs<-rep(0,length(kVals))
+cnt<-1
+for(k in kVals){
+  print(sprintf("Current k value: %s",k))
+  errs[cnt]<-calcErr(k,numReps)
+  cnt<-cnt+1
+}
+
+
+data.frame(k=kVals,err=errs) %>% 
+  ggplot()+
+  geom_point(aes(k,err))+
+  geom_line(aes(k,err))
+```
+
+Here's an alternative way without a for loop. The R function map_dbl is in the purrr library.
+```{r}
+##sorta large, be careful
+maxK <- 100
+kVals<-seq(1,maxK,by=2)
+## sorta large
+numReps<-50
+errs <- map_dbl(kVals,function(k) calcErr(k,numReps))
+```
+Here's a better plot! (Cleaned up a bit from class)
+```{r,message=FALSE}
+data.frame(kval=1/kVals,
+           err=rev(errs))%>%
+    ggplot()+
+    geom_point(aes(kval,rev(err)),color="red")+
+    geom_line(aes(kval,rev(err)),color="red")+
+      #geom_smooth(aes(kval2,rev(err)),se=F,color="blue")+
+    scale_x_continuous("1/k",breaks=c(.01,.02,.05,.1,.2,.5,1),trans='log2')+
+    ggtitle("KNN errors")
+
+
+```
+
+
+We can see that the minimum test error occurs near 1/k = .60 or so. 
+## Your part. 
+Now add in the training error. Construct 2.17. Note that this
+figure includes the Bayes Error rate.

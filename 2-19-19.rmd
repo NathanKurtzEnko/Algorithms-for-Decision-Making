@@ -1,0 +1,724 @@
+---
+title: "K Nearest Neighbors"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE,message=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache = TRUE)
+library(tidyverse)
+```
+# Classification using K-nearest neighbors (KNN)
+The output values are now discrete. The simplest case is when there are two
+distinct classes
+
+Basic idea: given a prediction points $x_0$, identify the $k$ nearest points
+in the training set. Take the majority winner.
+
+## 1-dimensional example
+Inputs are values $x$ on the real line. The output ares values
+$y \in \{0,1\}$ or any set of two values.
+
+### Build some training data
+Plan: Build some synthetic data.
+
+Use a standard distributions to generate the x values for
+each class.
+
+For example, use normal distributions. There will be two normals
+for each of the classes. Pick centers for normally distributed data.
+For class 1 and class 2. The choice of the centers are arbitrary
+```{r}
+mu1<-c(-1,1.5)
+mu2<-c(-2,2)
+
+```
+
+
+Variances...there's no reason these need to be equal. Any values can work.
+```{r}
+sig1<-1/sqrt(2)
+sig2<-1/sqrt(2)
+```
+
+R is nice in that the dnorm function, for a given value,  will give the density values at the pairs of means and standard deviations.
+
+For example, at x=1, the density values are:
+```{r}
+dnorm(0,mu1,sig1)
+dnorm(1,mu2,sig2)
+```
+
+Now complete the building of the data set.
+Use these class names.
+```{r}
+classes<-c("A","B")
+
+```
+
+```{r}
+xvals<-seq(-4,4,.1)
+gg1<-ggplot()+
+  geom_line(aes(x=xvals,y=dnorm(xvals,mu1[1],sig1)),color="red")+
+  geom_line(aes(x=xvals,y=dnorm(xvals,mu1[2],sig1)),color="red")+
+  geom_line(aes(x=xvals,y=dnorm(xvals,mu2[1],sig2)),color="blue")+
+  geom_line(aes(x=xvals,y=dnorm(xvals,mu2[2],sig2)),color="blue")+
+  scale_x_continuous("")+
+  scale_y_continuous("Density")
+
+gg1+ggtitle("Red = A, Blue = B")
+
+```
+
+Now generate some data
+The total number of elements of each class.
+```{r}
+N1<-100
+N2<-100
+```
+
+
+Mix it up between the two normals
+```{r}
+v1<-rnorm(N1,mu1[1],sig1)
+v2<-rnorm(N1,mu1[2],sig1)
+```
+
+
+randomly select the values for the first class
+```{r}
+x1<-sample(c(v1,v2),N1,rep=F)
+```
+
+
+Similar for the other class
+```{r}
+v1<-rnorm(N2,mu2[1],sig2)
+v2<-rnorm(N2,mu2[2],sig2)
+x2<-sample(c(v1,v2),N2,rep=F)
+
+```
+
+
+Our data
+```{r}
+train.df<-data.frame(x=c(x1,x2),
+                    class=factor(c(rep("A",N1),rep("B",N2))))
+
+with(train.df,table(class))
+```
+
+
+How does this look??
+```{r}
+xvals<-seq(-4,4,.1)
+gg1<-ggplot()+
+  geom_line(aes(x=xvals,y=dnorm(xvals,mu1[1],sig1)),color="red")+
+  geom_line(aes(x=xvals,y=dnorm(xvals,mu1[2],sig1)),color="red")+
+  geom_line(aes(x=xvals,y=dnorm(xvals,mu2[1],sig2)),color="blue")+
+  geom_line(aes(x=xvals,y=dnorm(xvals,mu2[2],sig2)),color="blue")+
+  geom_point(data=train.df %>% filter(class=="A"),aes(x,y=0,color=class))+
+  geom_point(data=train.df %>% filter(class=="B"),aes(x,y=-0.02,color=class))+
+    scale_color_manual(values=c("red","blue"))+
+    ggtitle("Training Data (original distributions shown)")
+gg1
+
+```
+
+# Bayes Probability and Classifier
+
+The *Bayes Probability* is only known if we know the mechanism that
+generated the data. In this case we do!
+
+This function gives the probability of being in class=A.
+```{r}
+bayesProb<-function(x){
+  ##Prob (unnormalized) of being in class A
+  p1<-sum(dnorm(x,mu1,sig1))
+  ##Prob (unnormalized) of being in class B
+  p2<-sum(dnorm(x,mu2,sig2))
+  ## Prob of class 1
+  p1/(p1+p2)
+}
+
+
+```
+
+
+Quick check:
+```{r}
+c(bayesProb(0.5),
+bayesProb(-4),
+bayesProb(3))
+
+```
+
+
+A simple plot of the Bayes Probability.
+Bayes Decision Boundary occurs when the Bayes Probabililty = 0.5
+```{r}
+xvals<-seq(-5,5,.01)
+pvals<-map_dbl(xvals,bayesProb)
+
+data.frame(xvals,pvals) %>% 
+  ggplot()+
+  geom_line(aes(xvals,pvals))+
+    ggtitle("Bayes Probability")+
+  xlab("Bayes Probability of Class = 1")+
+  ylab("")+
+  geom_hline(yintercept=0.5,color="red")+
+  xlab("Bayes Probability of Class = 1")+
+  ylab("")
+
+
+
+```
+
+
+## Bayes Classifier
+Now we can see how the (optimal) Bayes Prediction works
+```{r}
+bayes.df<-data.frame(x=xvals,
+                     p=pvals) %>%
+  ## Here is the Bayes Classification
+  mutate(class=factor(ifelse(p > 0.5,"A","B")))
+with(bayes.df,table(class))
+```
+
+
+## Plot with a  Bayes Decision Regions.
+
+What defines the boundary between Bayes classes?  
+```{r}
+gg1+
+    geom_point(data=bayes.df,aes(x,y=-.04,color=class),size=1)+
+     xlab("")+ylab("")+
+    ggtitle("Training Data with Bayes Regions")
+```
+##   Bayes Classifier Performance
+
+How well does the Bayes classifier do? In general, it's the best possible classifier. Of course, in practice, the underlying probability distributions are not known. Still, we can use it as a baseline.
+
+```{r}
+train.df<-train.df %>% 
+  mutate(predClass=map_dbl(train.df$x,bayesProb) > 0.5) %>% 
+  mutate(predBayesClass=ifelse(predClass,"A","B"))
+```
+
+How well did we do? This is called the *Confusion Matrix*.
+```{r}
+with(train.df,table(class,predBayesClass))
+```
+Looks pretty good. Compute the error rate.
+```{r}
+(err.bayes<-with(train.df,mean(!class==predBayesClass)))
+```
+So there is our baseline, a Bayes Error rate of `r err.bayes`.
+
+# Our own KNN Prediction Function
+A K-nearest neighbor model does exactly that, for any proposed input, it finds the k nearest (closest) values in the data and uses these to make a prediction. In this case, it would just use the majority vote of the values of the nearest neighbors
+
+
+### Building the function: Process Development
+
+Suppose you have bunch of x values, an input x0, and a value of k. How can we find the k nearest neighbors?
+
+Here's method.
+
+Generate some data
+```{r}
+N<-20
+pts<-runif(N,-2,2)
+x0<-0.5
+k<-5
+
+```
+
+Take a look at the data
+```{r}
+data.frame(x=pts,id=1:N) %>% 
+  ggplot()+
+  geom_point(aes(id,pts),color="brown",size=2)+
+  geom_hline(yintercept=x0,color="orange",size=1) 
+```
+
+
+Create a simple distance function. 
+```{r}
+dist<-function(x0,x1){
+  abs(x0-x1)
+}
+```
+
+Compute all the distances from the points to x0 using *map_dbl.*
+```{r}
+allDists<-map_dbl(pts,function(x) dist(x0,x))
+```
+
+Here's the trick. R will compute the *order* of the data.
+```{r}
+allOrds<-order(allDists) # this orders data in ascending order and gives you the index of that lowest values
+allOrds
+```
+
+The smallest element is at allOrds[1], the second smallest is at allOrds[2], etc.
+
+Thus, the k closest indices are just the first k elements of allOrds.
+```{r}
+allOrds[1:k]
+```
+The k closest points are the pts at these indices.
+```{r}
+pts[allOrds[1:k]]
+```
+
+Here's a quick visual check on whether this is working correctly
+```{r}
+data.frame(x=pts,id=1:N,order=allOrds) %>% 
+  ggplot()+
+  geom_point(aes(id,pts,color=id %in% allOrds[1:k]),size=2)+
+  scale_color_manual(values=c("red","blue"))+
+  guides(color=F)+
+  geom_hline(yintercept=x0,color="orange",size=1) +
+  ggtitle(sprintf("Nearest %s values to x0=%s",k,x0))
+  
+```
+Looks good.
+
+Rerun everything with different N and k values, just to confirm it seems to be working.
+
+# 1-Dimensional  KNN with two classes.
+Now we can build a KNN classifier for 1-D data. Note that everything below is just  recap of what happened above.
+
+The allResp=TRUE/FALSE value allows us to include more information in the output.
+```{r}
+myKnn<-function(x0,kNear,train.df,allResp=FALSE){
+  ##make sure kNear isn't too big
+  kNear<-min(nrow(train.df),kNear)
+  ##identify the classes
+  classes<- with(train.df, as.character(unique(class)))
+  xVals<-with(train.df,x)
+  tot<-length(xVals)
+  ##get the ascending order of distances
+  allOrds<-order(map_dbl(xVals,function(x) dist(x,x0)))
+  ##get the k closest
+  closest<-allOrds[1:kNear]
+  ##Decide which class wins..not the most elegant ending.
+  ## But I haven't seen an easier way 
+  ##extract the classes of the the closest
+  ##Take the mean equal to classes[1]
+  p<-with(train.df[closest,],mean(class==classes[1]))
+  if(p>0.5){
+    res<-classes[1]
+  }else{
+    res<-classes[2]
+  }
+  ##Check how much output to return
+  if(allResp){
+    ## a list of resp, probability, and the indices of the nhbs.
+    list(res,p,(1:tot)[closest])
+  } else{
+    res
+  }
+}
+
+```
+
+### Testing...
+Let's see if this works. 
+```{r}
+kval <- 7
+x0 <- 2.0965
+myKnn(x0,kval,train.df)
+```
+
+Here's the response with all the information.
+```{r}
+kval <- 17
+x0 <- -1
+res<-myKnn(x0,kval,train.df,TRUE)
+##more info....
+res[[1]]
+res[[2]]
+res[[3]]
+```
+
+Does this look correct? A picture is always a good test.
+
+```{r}
+##Pull off the ids of the closest points
+closeIDs<-res[[3]]
+train.df %>% 
+  ##need to add an id number
+  mutate(id=row_number(),
+         ## identify the close ones
+         isClose=id %in% closeIDs)   %>% 
+  ggplot()+
+  geom_point(aes(id,x,color=isClose,shape=class),size=2)+
+  geom_hline(yintercept=x0)+
+  coord_flip()
+```
+We're ok now.
+
+## Classification with myKnn
+
+We need to do a little work to get myKnn to work over an entire data frame.
+
+Fix kval.
+```{r}
+kval<-5
+```
+
+
+Extend myKnn so it works on an entire data frame
+
+```{r}
+myKnn2 <- function(test.df,kval,train.df){
+   with(test.df,
+      ##send each x value in the data frame 
+      ## to myKnn.
+      ##map over the x values in test.df. 
+      ##map_chr because the returns are "A"/"B"
+     map_chr(x,
+             function(x1) myKnn(x1,kval,train.df)))
+}
+
+
+
+```
+## Testing...Predict on the training data.
+
+Play around with different xvals.
+```{r}
+kval<-3
+myKnn2(train.df,kval,train.df)
+```
+
+
+Specify a kval and make the predictions over the entire data set
+```{r}
+kval <- 15 # if k <- 1 this is overfit
+train.df$predKNN<-myKnn2(train.df,kval,train.df)
+
+```
+
+How did we do? This is called the *confusion matrix*
+```{r}
+with(train.df,table(class,predKNN))
+```
+
+
+The error rate: what proprotion did we get wrong?
+```{r}
+(err.train<-with(train.df,mean(class != predKNN)))
+```
+
+How does it look compared to the Bayes Prediction?
+```{r}
+
+gg1+
+    geom_point(data=bayes.df,aes(x,y=-.04,color=class),size=1)+
+    geom_point(data=train.df,aes(x,y=-.08,color=predKNN),size=1)+
+    ggtitle("Training, Bayes Regions, and KNN Training Prediction")
+
+```
+A lot of overlap. That's good.
+
+
+## Build Testing data set
+
+Build random test data same as before. It helps to build a function that encapsulates a lot of the work. It helps to have 
+a function that builds the synthetic data.
+```{r}
+buildData<-function(N){
+  #print(N)
+  v1<-rnorm(N,mu1[1],sig1)
+  v2<-rnorm(N,mu1[2],sig1)
+  x1<-sample(c(v1,v2),N,rep=F)
+  v1<-rnorm(N,mu2[1],sig2)
+  v2<-rnorm(N,mu2[2],sig2)
+  x2<-sample(c(v1,v2),N,rep=F)
+  #print(c(x1,x2))
+  data.frame(x=c(x1,x2),
+                      class=rep(c("A","B"),each=N))
+}
+```
+
+Our data
+```{r}
+N<-N1
+test.df <- buildData(N)
+
+kval<-7
+test.df$predKNN <- myKnn2(test.df,kval,train.df)
+
+```
+
+
+The confusion matrix and the error rate
+```{r}
+with(test.df,table(class,predKNN))
+(err.test<-with(test.df,mean(class != predKNN)))
+
+```
+So on the test data, with a kval of `r kval`, the error rate is `r err.test`.
+
+
+
+In summary...
+```{r}
+c(err.train,err.bayes,err.test)
+```
+
+
+The training error is generarly the smallest. The Bayes error is
+generally the lower limit in practice (overall possible training data)
+
+#Best choice of k?
+
+## Assignment.
+
+A natural question, given this model, is there an optimal value of
+the k, i.e. a value that minimizes the classification error?
+
+Something to note here is that the maximal flexibility occurs at
+k=1. The least flexible model occurs when k equals the number of
+data points.
+
+Compute the MSE for values of k=1,2,.....kMax. Does there appear to be an optimal value? Make sure you use both train and test data in your computations.
+
+```{r}
+##define new function
+rnorm2 <- function(n, mean, sd){
+  rnorm(n, mean, sd)+rnorm(n, mean, sd)
+}
+###build data
+
+#define centers
+c1 <- c(-2,2)
+c2 <- c(-1,1)
+
+#define variances
+s1 <- .1 
+s2 <- .2
+
+#define numbers of data points
+m1 <- 100
+m2 <- 100
+
+#define classes
+class <- c("a", "b")
+
+#define vectors
+v1 <- rnorm2(m1, c1[1], s1)
+v2 <- rnorm2(m1, c1[2], s1)
+v3 <- rnorm2(m2, c2[1], s2)
+v4 <- rnorm2(m2, c2[2], s2)
+
+#sample vectors
+x1 <- sample(c(v1,v2), m1, rep=F)
+x2 <- sample(c(v3,v4), m2, rep=F)
+
+#create tibble or data frame
+training_data <- tibble(value = c(x1,x2), class = factor(c(rep("A", m1), rep("B", m2))))
+
+#make plot
+x_values <- seq(-4,4,.1)
+a_class <- training_data %>%
+  filter(class == "A")
+b_class <- training_data %>%
+  filter(class == "B")
+ggplot()+
+  geom_line(aes(x = x_values, y = dnorm(x_values, c1[1], s1)), color = "red")+
+  geom_line(aes(x = x_values, y = dnorm(x_values, c1[2], s1)), color = "red")+
+  geom_line(aes(x = x_values, y = dnorm(x_values, c2[1], s2)), color = "blue")+
+  geom_line(aes(x = x_values, y = dnorm(x_values, c2[2], s2)), color = "blue")+
+  geom_point(data = a_class, aes(x = value, y = 0), color = "red")+
+  geom_point(data = b_class, aes(x = value, y = -.2), color = "blue")+
+  ggtitle("Distribution", subtitle = "class a = red, class b = blue")
+  
+
+```
+
+```{r}
+dnorm(m1, c1[1], s1)
+```
+
+
+
+# Assignment
+Redo this process with different underlying data models. In other
+words, alter how the model above was defined to generate the
+data. In the example above, I used two normal distributions, two
+for each of the classes. They had different means, but the same
+variances. Also, both classes had the same number of data points.
+
+Possible modifications include replacing the normal distribution
+with, say, the uniform.
+```{r}
+a <- 2
+b <- 3
+N <- 1000
+xvals <- runif(N,a,b)
+hist(xvals,breaks=25)
+
+```
+
+
+The density function for this is the function that takes on the
+constant value f(x)=1/(b-a) for $x \in [a,b]$ and is 0 otherwise.
+
+
+Or better, the sum of two uniforms.
+
+```{r}
+runif2<-function(n,a=0,b=2){
+  runif(n,a/2,b/2)+runif(n,a/2,b/2)
+}
+
+a <- 2
+b <- 3
+N <- 10000
+xvals <- runif2(N,a,b)
+hist(xvals,breaks=25)
+
+```
+
+
+This case the density function is a triangle, with slopes $\pm 1$
+and centered at $\frac{a+b}{2}$
+
+Or you could vary the number and variances of the example described
+above. Whatever you do, try to determine the Bayes Probabilites and
+Decision regions, just as we did before. Importantly, make sure you
+explore how the error changes as a function of kval as you make
+predictions on test data.
+
+Can you identify cases where the prediction power is highly
+dependent on a choice of k? Do you ever see a case where the KNN
+prediction regions differ markedly from the Bayes rediction
+regions?
+Is there an intutive explanation of why this happens?
+
+
+
+## Nearest neighbor regression
+
+Nearest neighbors work with quantitative prediction as well. Instead of taking the majority of the classes of the nearest neighbors, we take the mean value of the responses of the nearest neighbors. It's as easy as that.
+
+Assume the training data has a "resp"
+```{r}
+myKnnReg<-function(x0,kNear,train.df,allResp=FALSE){
+  ##make sure kNear isn't too big
+  kNear<-min(nrow(train.df),kNear)
+  xVals<-with(train.df,x)
+  tot<-length(xVals)
+  ##get the ascending order of distances
+  allOrds<-order(map_dbl(xVals,function(x) dist(x,x0)))
+  ##get the k closest
+  closest<-allOrds[1:kNear]
+  ##Take the mean of the nearest responses
+  res<-with(train.df[closest,],mean(resp))
+  if(allResp){
+    list(res,p,(1:tot)[closest])
+  } else{
+    res
+  }
+}
+```
+Now we can use it on our example from last week.
+```{r}
+f<-function(x) x+ sin(5*pi*x)
+N <-200 # number of data points
+sig<-.5 # for the noise
+x<-runif(N,0,1) # inputs
+resp<-f(x)+rnorm(N,0,sig) #realized values
+train.df<-data.frame(x,resp)
+```
+Here's our data.
+```{r}
+train.df %>% 
+  ggplot()+
+  geom_point(aes(x,resp),color="blue")+
+  ggtitle("Our data")
+```
+Testing...
+
+```{r}
+kval<-15
+myKnnReg(0.50,kval,train.df)
+```
+
+
+Finally....use KNN Regression
+
+```{r}
+myKnnReg2 <- function(test.df,kval,train.df){
+   with(test.df,
+        ##send each x value in the data frame 
+        ## to myKnn.
+     map_dbl(x,
+             function(x1) myKnnReg(x1,kval,train.df)))
+}
+
+```
+
+Pick a kval and do the predition on the training data.
+```{r}
+kval<-25
+preds<-myKnnReg2(train.df,kval,train.df)
+train.df$predKNN<-preds
+```
+
+How does this look?
+```{r}
+train.df %>% 
+  ggplot()+
+  geom_point(aes(x,resp),color="blue")+
+  geom_point(aes(x,predKNN),color="red")+
+  geom_step(aes(x,predKNN),color="red")+
+  ggtitle("Our data")
+```
+
+
+Pick a range of kvalues and see what we get. 
+```{r}
+kVals<-c(1,5,10,15,25,35,55,75,105,200)
+kval<-15
+plts<-list()
+cnt<-1
+for(kval in kVals){
+  print(kval)
+  kval
+  preds<-myKnnReg2(train.df,kval,train.df)
+  train.df$predKNN<-preds
+  gg<-train.df %>% 
+    ggplot()+
+    geom_point(aes(x,resp),color="blue")+
+    geom_point(aes(x,predKNN),color="red")+
+    geom_step(aes(x,predKNN),color="red")+
+    ggtitle(sprintf(" k=%s",kval))
+    plts[[cnt]] <- gg
+    cnt<-cnt+1
+}
+
+```
+
+As before...use the gridExtra package and grid.arrange.
+```{r}
+##Use the gridExtra package to combine these plots
+library(gridExtra)
+## grid for the grid title
+library(grid)
+
+## Now use grid.arrange
+grid.arrange(grobs=plts,nrow=2,
+             top = textGrob("KNN Regression",gp=gpar(fontsize=20,font=3)))
+
+```
+
+## Assignment
+Compare KNN Regression with linear (polynimial) regression. For the synthetic data just used. Using train+test data, compute the MSE as function of k (in KNN Regression) and d (in polynomial regression). Present each result visually (a graph of each). 
+
+Can you conclude the either method is superior?

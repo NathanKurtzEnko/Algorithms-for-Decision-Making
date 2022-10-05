@@ -1,0 +1,681 @@
+---
+title: "4-18-19"
+author: "Nathan Kurtz-Enko"
+date: "4/19/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache = TRUE)
+```
+Load the libraries
+```{r}
+library(tidyverse)
+library(class) ##for knn
+library(e1071) ##for svm
+library(gridExtra) ## for grid.arrange
+
+
+
+
+
+```
+
+
+
+#Build the classification data
+
+```{r}
+n <- 500
+x1 <- rnorm(n,0,3)
+x2 <- rnorm(n,0,3)
+
+```
+
+
+Add some nonlinear features
+```{r}
+x12 <- x1*x2
+x11 <- x1^2
+x22 <- x2^2
+
+```
+
+
+here we go
+```{r}
+sig <- 1
+sc <- 1.0
+```
+
+
+nonLinear
+```{r}
+yNonLinear <-  (-2*x1-3*x2-3*x12+x11-x22)/sc+rnorm(n,0,sig)
+```
+
+
+Totally Linear
+```{r}
+yLinear <-  (-2*x1-3*x2)/sc+rnorm(n,0,sig)
+```
+
+
+Probabilities
+```{r}
+pNonLinear <- exp(yNonLinear)/(1+exp(yNonLinear))
+pLinear <- exp(yLinear)/(1+exp(yLinear))
+```
+
+
+hist(p)
+
+Select the classes according to a Bernoulli distribution
+```{r}
+classNonLinear <- rbernoulli(n,pNonLinear)
+classLinear <- rbernoulli(n,pLinear)
+```
+
+
+Pack into a data frame
+```{r}
+data.df <- data.frame(x1,x2,
+                      classNonLinear=factor(classNonLinear),
+                      classLinear=factor(classLinear))
+
+```
+
+
+What are we looking at?
+
+Linear Data
+```{r}
+data.df %>% 
+  ggplot()+
+  geom_point(aes(x1,x2,color=classLinear))+
+  scale_color_manual(values=c("red","blue"))+
+  ggtitle("Linearly separated classes")
+
+```
+
+
+Nonlinear data
+```{r}
+data.df %>% 
+  ggplot()+
+  geom_point(aes(x1,x2,color=classNonLinear))+
+  scale_color_manual(values=c("red","blue"))+
+  ggtitle("NonLinearly separated classes")
+
+
+```
+
+
+#Reference, KNN Model
+To get started, build a KNN model
+```{r}
+x.data <- data.df[c("x1","x2")]
+y.NonLineardata <- data.df$classNonLinear
+y.Lineardata <- data.df$classLinear
+
+```
+
+
+Make the predictions and get an error rate
+```{r}
+pred.knn <- knn(x.data,x.data,y.NonLineardata,k=10)
+with(data.df,mean(classNonLinear != pred.knn))
+
+
+```
+
+
+Quick Cross-validation
+```{r}
+numFolds <- 10
+folds <- sample(1:numFolds,nrow(data.df),rep=T)
+
+maxK <- 100
+errKNN <- numeric(maxK)
+errCV <- numeric(numFolds)
+for(kVal in 1:maxK){
+  for(fold in 1:numFolds){
+    train.df <- data.df[fold != folds,] 
+    test.df <- data.df[fold == folds,]  
+    x.train <- train.df[c("x1","x2")]
+    x.test <- test.df[c("x1","x2")]
+    y.train <- train.df$classNonLinear
+    pred.knn <- knn(x.train,x.test,y.train,k=kVal)
+    errCV[fold] <- with(test.df,mean(classNonLinear != pred.knn))
+  }
+errKNN[kVal] <- mean(errCV)
+}
+plot(errKNN)
+min(errKNN)
+(bestK <- which.min(errKNN))
+
+```
+
+
+
+#Build a Grid Picture
+
+Define ranges etc.
+```{r}
+xrange1 <- with(data.df,range(x1))
+xrange2 <- with(data.df,range(x2))
+x1vals <- seq(xrange1[1],xrange1[2],by=.1)
+x2vals <- seq(xrange2[1],xrange2[2],by=.1)
+
+grid.xy <- expand.grid(x1vals,x2vals)
+grid.df <- data.frame(x1=grid.xy[,1],
+                      x2=grid.xy[,2])
+
+```
+
+
+Include KNN predictions
+```{r}
+pred.knn <- knn(x.data,grid.xy,y.NonLineardata,k=bestK)
+grid.df$pred <- pred.knn
+
+
+```
+
+
+What are we looking at?
+```{r}
+grid.df %>% 
+  ggplot()+
+  geom_tile(aes(x1,x2,fill=pred),alpha=0.5)+
+  geom_point(data=data.df,aes(x1,x2,color=classNonLinear))+
+  scale_color_manual(values=c("red","blue"))+
+  scale_fill_manual(values=c("red","blue"))+
+  ggtitle("KNN Model for NonLinear data")
+```
+
+
+Pretty good fit.
+
+#Support Vector Classifier
+Introduce a Support Vector Classifier
+aka SVC 
+
+Start with the linear data
+Cost of an excursion into the margin
+```{r}
+theCost <- 10
+
+```
+
+
+Build the model
+```{r}
+mod.svm <- svm(factor(classLinear)~x1+x2,
+               data=data.df,
+               kernel="linear",
+               cost=theCost,
+               scale=F)
+
+```
+
+
+Lots going on with the svm model.
+```{r}
+names(mod.svm)
+
+```
+
+
+Identify the support vectors an pull of the support indices
+
+
+```{r}
+supportIndices <- mod.svm$index
+```
+
+
+How many support vectors
+```{r}
+length(supportIndices)
+n <- nrow(data.df)
+data.df$support <- (1:n) %in% supportIndices
+
+
+```
+
+
+Now look at the support vector classifier prediction grid
+```{r}
+grid.df$pred <- predict(mod.svm,newdata=grid.df)
+
+
+```
+
+
+##A plot of the SVC with the support vectors indicated
+```{r}
+grid.df %>% 
+  ggplot()+
+  geom_tile(aes(x1,x2,fill=pred),alpha=0.5)+
+  geom_point(data=data.df,aes(x1,x2,color=classLinear),size=2)+
+  geom_point(data=data.df %>% filter(support),
+             aes(x1,x2),size=.25,color="green")+
+  scale_size_manual(values=c(1,2))+
+  scale_color_manual(values=c("red","blue"))+
+  scale_fill_manual(values=c("red","blue"))+
+  ggtitle("SVC Model for Linear Data: Support Vectors Indicated")
+
+```
+
+
+##How well did the prediction do?
+```{r}
+pred.svm <- predict(mod.svm)
+```
+
+
+The results
+```{r}
+with(data.df,table(classLinear,pred.svm))
+with(data.df,mean(classLinear != pred.svm))
+
+
+
+```
+
+
+##Create svc's with different cost values
+Play around the with the value of cost in the svm function
+How does cost change the margin??
+```{r}
+doSVCPlot <- function(theCost){
+  mod.svm <- svm(factor(classLinear)~x1+x2,
+                 data=data.df,
+                 kernel="linear",
+                 cost=theCost,
+                 scale=F) 
+  
+  data.df$support <- (1:n) %in%  mod.svm$index 
+  grid.df$pred <- predict(mod.svm,newdata=grid.df)
+  ## A plot of the SVC with the support vectors indicated
+  grid.df %>% 
+    ggplot()+
+    geom_tile(aes(x1,x2,fill=pred),alpha=0.5)+
+    geom_point(data=data.df,aes(x1,x2,color=classLinear),size=2)+
+    geom_point(data=data.df %>% filter(support),
+               aes(x1,x2),size=.25,color="green")+
+    scale_size_manual(values=c(1,2))+
+    scale_color_manual(values=c("red","blue"))+
+    scale_fill_manual(values=c("red","blue"))+
+    ggtitle(sprintf("Cost=%s  Number=%s",theCost,length(mod.svm$index )))
+}
+
+```
+
+
+Different cost values
+```{r}
+gg1 <- doSVCPlot(.001)
+gg2 <- doSVCPlot(.01)
+gg3 <- doSVCPlot(10)
+gg4 <- doSVCPlot(1000)
+
+grid.arrange(gg1,gg2,gg3,gg4,nrow=2)
+
+
+
+```
+
+
+
+#Support Vector Machines: Polynomial Kernel
+Now consider the nonlinear data and a polynomial classifier
+```{r}
+theDegree <- 2
+theCost <- .05
+mod.svm <- svm(factor(classNonLinear)~x1+x2,
+               data=data.df,
+               kernel="poly",
+               cost=theCost,
+               degree=theDegree,
+               scale=F)
+```
+
+
+Pull of the support indices
+```{r}
+supportIndices <- mod.svm$index
+```
+
+
+How many support vectors
+```{r}
+length(supportIndices)
+data.df$support <- 1:n %in% supportIndices
+
+```
+
+
+##Plot on a grid
+```{r}
+grid.df$pred <- predict(mod.svm,newdata=grid.df)
+
+grid.df %>% 
+  ggplot()+
+  geom_tile(aes(x1,x2,fill=pred),alpha=0.5)+
+  geom_point(data=data.df,aes(x1,x2,color=classNonLinear),size=2)+
+  geom_point(data=data.df %>% filter(support),
+             aes(x1,x2),size=.25,color="green")+
+  scale_color_manual(values=c("red","blue"))+
+  scale_fill_manual(values=c("red","blue"))+
+  ggtitle("SVC Model for NonLinear Data: Support Vectors Indicated")
+
+```
+
+
+##Create svc's with different cost values
+Play around the with the value of cost in the svm function
+How does cost change the margin??
+```{r}
+doSVCPlot <- function(theCost){
+  mod.svm <- svm(factor(classNonLinear)~x1+x2,
+                 data=data.df,
+                 kernel="polynomial",
+                 degree=2,
+                 cost=theCost,
+                 scale=F) 
+  
+  data.df$support <- (1:n) %in%  mod.svm$index 
+  grid.df$pred <- predict(mod.svm,newdata=grid.df)
+  ## A plot of the SVC with the support vectors indicated
+  grid.df %>% 
+    ggplot()+
+    geom_tile(aes(x1,x2,fill=pred),alpha=0.5)+
+    geom_point(data=data.df,aes(x1,x2,color=classNonLinear),size=2)+
+    geom_point(data=data.df %>% filter(support),
+               aes(x1,x2),size=.25,color="green")+
+    scale_size_manual(values=c(1,2))+
+    scale_color_manual(values=c("red","blue"))+
+    scale_fill_manual(values=c("red","blue"))+
+    ggtitle(sprintf("Cost=%s  Number=%s",theCost,length(mod.svm$index )))
+}
+
+```
+
+
+Different cost values
+```{r}
+gg1 <- doSVCPlot(.001)
+gg2 <- doSVCPlot(.01)
+gg3 <- doSVCPlot(10)
+gg4 <- doSVCPlot(1000)
+grid.arrange(gg1,gg2,gg3,gg4,nrow=2)
+
+
+
+
+```
+
+
+#Tuning a SVM Model
+Parameters such as cost and degree need to be selected with care
+Fortunately, SVM has a built-in "tuning" function.
+Create a grid of values to be tuned
+```{r}
+costVals <- 10^seq(-2,2,by=1)
+degreeVals <- 1:4
+```
+
+
+Number of folds in CV
+```{r}
+numFolds <- 5
+```
+
+
+Now the tuning...
+```{r}
+svm.tune <- tune(svm,factor(classNonLinear)~x1+x2,
+     data=data.df,
+     kernel="poly",
+     ranges=list(cost=costVals,
+                 degree=degreeVals),
+     tunecontrol=tune.control(cross=numFolds)
+     )
+
+
+```
+
+
+What does this produce??
+```{r}
+names(svm.tune)
+```
+
+
+The summary
+```{r}
+summary(svm.tune)
+
+```
+
+
+Pull off the optimal values for cost and degree
+```{r}
+(cost.best <- svm.tune$best.parameters$cost)
+(degree.best <- svm.tune$best.parameters$degree)
+
+```
+
+
+
+Use these to build the svm
+```{r}
+mod.svm <- svm(factor(classNonLinear)~x1+x2,
+               data=data.df,
+               kernel="poly",
+               degree=degree.best,
+               cost=cost.best,
+               scale=F)
+
+```
+
+
+Pull of the support indices
+```{r}
+supportIndices <- mod.svm$index
+```
+
+
+How many support vectors
+```{r}
+length(supportIndices)
+data.df$support <- 1:n %in% supportIndices
+
+
+```
+
+
+What do we see here? About the same
+```{r}
+grid.df$pred <- predict(mod.svm,newdata=grid.df)
+grid.df %>% 
+  ggplot()+
+  geom_tile(aes(x1,x2,fill=pred),alpha=0.5)+
+  geom_point(data=data.df,aes(x1,x2,color=classNonLinear),size=2)+
+  geom_point(data=data.df %>% filter(support),
+             aes(x1,x2),size=.25,color="green")+
+  scale_color_manual(values=c("red","blue"))+
+  scale_fill_manual(values=c("red","blue"))+
+  ggtitle("SVC Model Polynomial Kernel: Support Vectors Indicated")
+
+
+
+```
+
+
+
+##SVM with a  Radial  Kernel
+A Radial Kernel is the most flexible, and hence the most
+easily over-fitted version of svm. It has a parameter defining the
+"precision" of the kernel.
+```{r}
+gammaVal <- 1
+costVal <- 1
+mod.svm <- svm(factor(classNonLinear)~x1+x2,
+               data=data.df,
+               kernel="radial",
+               gamma=gammaVal,
+               cost=costVal,
+               scale=F)
+
+grid.df$pred <- predict(mod.svm,newdata=grid.df)
+grid.df %>% 
+  ggplot()+
+  geom_tile(aes(x1,x2,fill=pred),alpha=0.5)+
+  geom_point(data=data.df,aes(x1,x2,color=classNonLinear),size=2)+
+  geom_point(data=data.df %>% filter(support),
+             aes(x1,x2),size=.25,color="green")+
+  scale_color_manual(values=c("red","blue"))+
+  scale_fill_manual(values=c("red","blue"))+
+  ggtitle("SVC Model Radial Kernel: Support Vectors Indicated")
+
+
+
+```
+
+
+##Tune
+Before tuning, experiment with different control
+parameters to get an idea of a decent range of values that work.
+```{r}
+costVals <- 10^seq(-2,2,by=1)
+gammaVals <- 2^seq(-1,3)
+numFolds <- 5
+svm.tune <- tune(svm,factor(classNonLinear)~x1+x2,
+                 data=data.df,
+                 kernel="radial",
+                 ranges=list(cost=costVals,
+                            gamma=gammaVals),
+                 tunecontrol=tune.control(cross=numFolds))
+```
+
+
+###What do we have?
+```{r}
+summary(svm.tune)
+(cost.best <- svm.tune$best.parameters$cost)
+(gamma.best <- svm.tune$best.parameters$gamma)
+
+
+```
+
+
+Use the optimal parameters
+```{r}
+mod.svm <- svm(factor(classNonLinear)~x1+x2,
+               data=data.df,
+               kernel="radial",
+               gamma=gamma.best,
+               cost=cost.best,
+               scale=F)
+
+```
+
+
+Pull of the support indices
+```{r}
+supportIndices <- mod.svm$index
+```
+
+
+How many support vectors
+```{r}
+length(supportIndices)
+data.df$support <- 1:n %in% supportIndices
+
+```
+
+
+One more look...
+```{r}
+grid.df$pred <- predict(mod.svm,newdata=grid.df)
+grid.df %>% 
+  ggplot()+
+  geom_tile(aes(x1,x2,fill=pred),alpha=0.5)+
+  geom_point(data=data.df,aes(x1,x2,color=classNonLinear),size=2)+
+  geom_point(data=data.df %>% filter(support),
+             aes(x1,x2),size=.25,color="green")+
+  scale_color_manual(values=c("red","blue"))+
+  scale_fill_manual(values=c("red","blue"))+
+  ggtitle("SVC Model Radial Kernel: Support Vectors Indicated")
+
+
+
+
+```
+
+
+
+#Assignment 1: BUPA Liver data
+Apply Support Vector Machines to BUPA Liver data
+https://archive.ics.uci.edu/ml/datasets/Liver+Disorders
+#Attribute information:
+1. mcv	mean corpuscular volume
+2. alkphos	alkaline phosphotase
+3. sgpt	alamine aminotransferase
+4. sgot 	aspartate aminotransferase
+5. gammagt	gamma-glutamyl transpeptidase
+6. drinks	number of half-pint equivalents of alcoholic beverages
+drunk per day
+7. selector (field used to split data into two sets)
+
+*Goal* Build the best possible SVM to classify a modified Field 6 based on Fields 1-5. 
+Make this a classification scenario. Create a new variable "HighAlcohol" to indicate if drinks>=1
+(you can change this). Drop the drinks variable. 
+
+You can use the selector field to make a train/test combination.
+Use these to estimate the error rates for various modeling approaches.
+Compare SVM, with different kernels (linear, poly, and radial) 
+to some other classification tools, e.g, logistic, lasso, knn,
+randomForest, boosting.  
+
+
+##Get things started. 
+```{r}
+liver.df <-
+  read.csv("BUPA.csv")
+names(liver.df) <- c("mcv","alkphos","sgpt","sgot","gannagt","drinks","selector")
+names(liver.df)
+liver.df <- liver.df %>% 
+  mutate(HighAlcohol=drinks>=1) %>% 
+  select(-drinks)
+
+validate.df <- liver.df %>% 
+  filter(selector==2) %>% 
+  select(-selector)
+nrow(validate.df)
+
+liver.df <- liver.df %>% 
+  filter(selector!=2) %>% 
+  select(-selector)
+nrow(liver.df)  
+
+with(liver.df,table(HighAlcohol))
+
+
+```
+
+
+#Assignment 2: Spam Revisited.
+The last time we looked at the spam data set. How does SVM compete with RandomForest
+and boosting as a spam predictor. Since you have some much spam data, use a train/test
+combination to evaluate your error rate.
+Make sure all your models are optimized before 
+drawing any conclusions.
+Note: Make sure your spam response variable is a factor.
+That is
+
+spam.df <- spam.df %>% 
+    mutate(IsSpam=factor(IsSpam))

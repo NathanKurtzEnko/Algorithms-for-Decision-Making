@@ -1,0 +1,141 @@
+---
+title: "2-14-19"
+author: "Nathan Kurtz-Enko"
+date: "2/14/2019"
+output: pdf_document
+---
+
+```{r}
+library(tidyverse)
+```
+
+## Define a quadratic model function
+## Play around with other choices (including linear
+
+```{r}
+f<-function(x) 10*x*(1-x)
+
+#f<-function(x) exp(2*x)
+#f<-function(x) x+ sin(5*pi*x)
+```
+##Data points
+```{r}
+N<-100
+```
+##number of reps 
+```{r}
+M<-100
+```
+##prediction points
+```{r}
+x0<-.5
+```
+##noise
+```{r}
+sig<-1.25
+```
+## Need this...
+```{r}
+bldForm<-function(d){
+  str<-"y~I(x)"
+  while(d>1){
+    str<-paste(str,sprintf("I(x^%s)",d),sep="+")
+    d<-d-1
+  }
+  str
+}
+```
+## Generate underlying picture
+```{r}
+xVals<-seq(0,1,.01)
+yModel<-f(xVals)
+yActs<-f(x0)+rnorm(M,0,sig)
+model.df<-data.frame(x=xVals,y=yModel)
+```
+##The plot
+```{r}
+gg1<-ggplot()+
+  geom_line(data=model.df,
+            aes(x,y),
+            size=1,
+            color="blue")+
+  geom_point(data=NULL,aes(x=x0+.01,y=yActs),
+             color="green",size=1)+
+  scale_y_continuous(limits=c(-2,6))
+gg1
+```
+
+##Do some predictions, generate xvals to see model structures
+```{r}
+xvals<-seq(0,1,by=0.01) ##includes x0
+n1<-length(xvals)
+```
+##Here's where we store all the values
+```{r}
+predVals<-matrix(nrow=M,ncol=n1)
+```
+##Build a plot with a model of degree = deg!
+```{r}
+bldPlot<-function(deg){
+  ##repeate M times
+  for(m in 1:M){
+    ##new training data
+    x<-runif(N,0,1)
+    y<-f(x)+rnorm(N,0,sig)
+    ##build the model
+    mod<-lm(formula(bldForm(deg)))
+    predVals[m,]<-predict(mod,newdata=data.frame(x=xVals))
+  }
+  ##reorganize the data to plot it.
+  predVals<-t(predVals)
+  dim(predVals)<-c(M*n1,1)
+  vals.df<-data.frame(x=rep(xvals,M),
+                      y=predVals,
+                      ##Which model
+                      model=factor(rep(1:M,each=n1)))
+  ## filter on the prediction point so we can emphasize it.
+  valsPred.df <-vals.df %>% 
+    filter(x==x0)
+ ## add to gg1 
+  gg1+
+    geom_line(data=vals.df,aes(x,y,group=model),alpha=.1)+
+    geom_point(data=valsPred.df,aes(x,y),color="red")+
+    ggtitle(sprintf("Model deg=%s",deg))
+}
+```
+
+##testing
+```{r}
+## Testing....
+bldPlot(3)
+```
+## Build a sequence of these
+```{r}
+plts<-list()
+maxDeg<-12
+for(deg in 1:maxDeg){
+  plts[[deg]]<-bldPlot(deg)
+}
+```
+## Testing...
+```{r}
+plts[[1]]
+```
+
+##Use the gridExtra package to combine these plots
+```{r}
+library(gridExtra)
+
+```
+## grid for the grid title
+```{r}
+library(grid)
+```
+
+## Now use grid.arrange
+```{r}
+grid.arrange(grobs=plts,nrow=2,
+             top = textGrob("Bias Variance Trade-off",gp=gpar(fontsize=20,font=3)))
+```
+## In this sequence, you can see how the variance of the predictions is increasing
+## with the degree (=flexibility). However, the bias is clearly decreasing

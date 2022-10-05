@@ -1,0 +1,210 @@
+---
+title: "Untitled"
+author: "Nathan Kurtz-Enko"
+date: "5/2/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache = TRUE)
+```
+#Introduction
+At the UCI Machine Learning Repository, there is an interesting data
+set combining the geographical locations (longitudes and latitudes) of
+music along with numerical audio features extracted from WAV files.
+The data and more information can be found at:
+http://archive.ics.uci.edu/ml/datasets/Geographical+Original+of+Music
+
+Let's do a preliminary exploration of this data set with an eye
+towards developing some lines of research.
+
+Start, as always, with loading tidyverse.
+```{r}
+suppressMessages(library(tidyverse))
+
+```
+
+
+Let's read the data. There are two different versions of the
+data. One has 68 predictor fields, the other has 116. The larger
+includes addtional "chromatic" features. We will use the larger data
+set. 
+
+Loading ....
+```{r}
+data.df <- read.csv("default_plus_chromatic_features_1059_tracks.txt",header=F)
+
+```
+
+
+Take a peeka nd see what we are looking at
+```{r}
+head(data.df)
+dim(data.df)
+```
+
+
+The predictor fields don't have any relevant descriptors, but we do
+want to identify the locations, whicha are in the last two
+columns. Pull of the dimensions and add field names for the
+longitude and latitude. 
+```{r}
+(nc <- ncol(data.df))
+(nr <- nrow(data.df))
+names(data.df)[(nc-1):nc] <- c("lat","lon")
+
+```
+
+
+As explained at the UCI site, the locations identify country of
+origin and the lon/lat values correspond to the locations of the
+capitals. To simplify things, we will a dd a site identifier.
+```{r}
+dataSite.df <- data.df %>%
+    group_by(lon, lat)%>%
+    summarize(siteTot=n())
+
+head(dataSite.df)
+
+```
+
+
+How many distinct site??
+```{r}
+(numSites <- nrow(dataSite.df))
+```
+
+
+Add a site number as a unique identifier of each site
+```{r}
+dataSite.df$siteNum <- factor(1:numSites)
+
+head(dataSite.df)
+
+
+
+```
+
+
+To aid in working with the data later, it helps to separate the
+predictors from the locations.
+```{r}
+lat.dat <- data.df[,nc-1]
+lon.dat <- data.df[,nc]
+musicData.dat <- data.matrix(data.df[,1:(nc-2)])
+
+
+```
+
+
+Where are these locations. To visualize these, create a data frame
+of just the sites. Identify them with numbers (as factors). 
+Build a plot the world with the sites indicated by labels.
+```{r}
+world <- map_data("world")
+gg.all <- ggplot()+
+    geom_map(data=world, map=world,
+                    aes(long, lat, map_id=region),
+                    color="white", fill="#7f7f7f", size=0.05,
+                    alpha=1/4)+
+     geom_label(data=dataSite.df, 
+                      aes(lon, lat,label=siteNum),
+                      size=1.6, alpha=1)
+gg.all
+
+
+
+```
+
+
+Add in region information by hand.
+These groupings are open to debate.
+```{r}
+Latin <- c(1, 2,3)
+Africa <- c(4,5,6,17,18,19)
+Mediterranean <- c(7,9,10,11,12,14)
+MidEast <- c(15,16,20,21)
+NorthEurope <- c(8,13)
+CenAsia <- c(22,23,24,25)
+SEAsia <- c(26,27,28)
+EAsia <- c(30,31,32)
+Austrailia <- c(29,33)
+
+```
+
+
+Put the list of sites in together and build the data frame. We need
+this so that we can add the region name to our overall dataset
+```{r}
+vals <-
+    c(Latin,Africa,Mediterranean,MidEast,NorthEurope,CenAsia,SEAsia,EAsia,Austrailia)
+
+region.df <- data.frame(region=c(rep("Latin",length(Latin)),
+                                 rep("Africa",length(Africa)),
+                                 rep("Mediterranean",length(Mediterranean)),
+                                 rep("MidEast",length(MidEast)),
+                                 rep("NorthEurope",length(NorthEurope)),
+                                 rep("CenAsia",length(CenAsia)),
+                                 rep("SEAsia",length(SEAsia)),
+                                 rep("EAsia",length(EAsia)),
+                                 rep("Australia",length(Austrailia))),siteNum=factor(vals))
+```
+
+
+How does this look?
+```{r}
+region.df
+dataSite.df <- dataSite.df %>%
+    inner_join(region.df)
+
+names(data.df)
+head(dataSite.df)
+```
+
+
+Include the regions in the data frame
+```{r}
+data.df <- data.df %>%
+    inner_join(dataSite.df)
+
+```
+
+
+Pull of the region information
+```{r}
+region.dat <- data.df[,nc+2]
+
+```
+
+
+Take a look at the region and site locations...looks ok
+```{r}
+library(ggrepel)
+gg.all2 <- ggplot()+
+    geom_map(data=world, map=world,
+                    aes(long, lat, map_id=region),
+                    color="white", fill="#7f7f7f", size=0.05,
+             alpha=1/4)+
+     geom_point(data=dataSite.df, 
+                      aes(lon, lat),
+                size=1.6, color="blue")+
+     geom_label_repel(data=dataSite.df, 
+                      aes(lon, lat,label=region),
+                size=1.6, alpha=1)
+gg.all2
+
+
+```
+
+
+
+#Questions
+This is a pretty interesting data set. There is potential for
+regression, classification, clustering, and PCA. Play around with it a bit
+and come up with a  list of investigations. Try to think of
+questions that you can approach using the fairly large collection of
+techniques you have at your disposal. 
+
+given more instances of traditional music, is there a process that we can use to classify music as belonging to specific region?
+
+given modern music, is there a process that we can use to determine how influential certain areas' traditional music is?

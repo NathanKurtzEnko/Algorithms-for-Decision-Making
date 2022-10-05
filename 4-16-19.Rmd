@@ -1,0 +1,173 @@
+---
+title: "4-16-19"
+author: "Nathan Kurtz-Enko"
+date: "4/16/2019"
+output: pdf_document
+---
+
+#Introduction
+
+Last time we saw the idea of how boosting works with quantitative data. The key idea is to explote a large numberof weak learners, inthiscasefairlyshallowtrees. Eachweaklearnerisappliedtotheresidualsand the resulting model “sands” away a small about of the residual, adding it into the eventual approximation. Repeating this process a large number of times produces the boosted model. Boosting is generally a very eﬀective procedure. Its biggest downside is that there three control variables in play.
+
+• The number of weak learners (trees). 
+
+• The shrinkage factor.. 
+
+• The strength of the weak learner, in the case of trees this is just the depth of a tree.
+
+At each step, the boosting algorithm goes after the biggest return on MSE reduction (its greedy in that way). However, to avoid falling into the greedy trap, the eﬀect at each stage is reduced by the shrinkage factor. Eﬀectively, at each stage boosting goes after the biggest problems (hence the sanding analogy). The R package gbm implements boosting. The gbm function is quite sophisticated. It includes crossvalidations, OOB estimation, and even the ability to explote multiple cores of the CPU. Please consult the documentation to see how to use these methods. Let’s quickly tecall how gbm works on quantitative response data. Use the built-in (ISLR) data set Auto.
+
+
+```{r}
+names(Auto)
+```
+
+Let's predict mpg based on some other variables. To simplify just, select just these ﬁelds.
+
+```{r}
+Auto <-Auto %>% 
+  dplyr::select(mpg,cylinders,displacement,horsepower,weight,acceleration)
+```
+
+
+Create a testing and training data sets.
+
+```{r}
+n<-nrow(Auto) 
+samp<-sample(1:n,n/2,rep=F) 
+AutoTrain.df<-Auto[samp,] AutoTest.df<-Auto[-samp,]
+```
+
+Now build the model. In this case, we will use gbm’s built-in Cross Validation. Note the use of cv.folds.
+```{r}
+
+maxTrees<-300 
+depth <- 2 
+lambda <- .2 
+numFolds <- 5 
+mod.gbm.cv<-gbm(mpg~., data=AutoTrain.df, 
+                n.trees=maxTrees, 
+                interaction.depth = depth, 
+                cv.folds=numFolds, 
+                distribution="gaussian", 
+                shrinkage=lambda, 
+                ##my machine has four cores 
+                n.cores=4)
+
+```
+
+
+What did we get out of this....
+
+```{r}
+(bestTrees <- gbm.perf(mod.gbm.cv))
+```
+
+The cross validated model has a lot of information in it.
+
+```{r}
+names(mod.gbm.cv)
+```
+
+Use the reported number of trees and predict on the test data.
+
+```{r}
+preds<-predict(mod.gbm.cv, newdata = AutoTest.df,n.trees=bestTrees)
+with(AutoTest.df,mean((mpg-preds)^2))
+```
+
+The variables horsepower and weight have the biggest eﬀect on reducing the MSE, followed by displacement and acceleration. Cylinders does not register as important. Interesting (sorta).
+
+```{r}
+summary(mod.gbm.cv)
+```
+
+Just for fun, let’s cross-validate ourselves
+
+```{r}
+doErr <- function(maxTrees,numFolds){ 
+  ##Keep track of these 
+  errsTrain <- matrix(0,nrow=maxTrees,ncol=numFolds) 
+  errsTest <- matrix(0,nrow=maxTrees,ncol=numFolds) 
+  ##build the folds 
+  n <- nrow(AutoTrain.df) 
+  folds <- sample(1:numFolds,n,rep=T) 
+  ##CV 
+  for(fold in 1:numFolds){ 
+    train.df <- AutoTrain.df[fold != folds,] 
+    test.df <- AutoTrain.df[fold == folds,] 
+    errsFolds <- matrix(NA,nrow=numFolds,ncol=2) 
+    ##Build the model on the maxTrees. 
+    mod <- gbm(mpg~., data=train.df, n.trees=maxTrees, 
+               interaction.depth = 2, 
+               distribution="gaussian", 
+               shrinkage=.2 ) 
+    ### Run through maxTrees to do the predictions. 
+    for(numTree in 1:maxTrees){ 
+      predsTrain <- predict(mod,newdata=train.df,n.trees=numTree) 
+      errTrain <- with(train.df,mean( (mpg-predsTrain)^2)) 
+      predsTest <- predict(mod,newdata=test.df,n.trees=numTree) 
+      errTest <- with(test.df,mean( (mpg-predsTest)^2)) 
+      errsTrain[numTree,fold] <- errTrain 
+      errsTest[numTree,fold] <- errTest } 
+  } 
+  ##The values we want are the row means 
+  ##(since the cols are the folds) 
+  cbind(rowMeans(errsTrain), rowMeans(errsTest)) 
+}
+```
+
+
+Run this and see how it works
+
+```{r}
+maxTrees <- 200 
+numFolds <- 5 
+cvVals <- doErr(maxTrees,numFolds)
+```
+
+What did we get...
+
+```{r}
+data.frame(tree=1:200, errTrain=cvVals[,1], errTest=cvVals[,2]) %>%
+  gather(var,err,2:3) %>% 
+  ggplot()+ 
+  geom_line(aes(tree,err,color=var))
+```
+
+
+Our cross-validated best number of trees is slightly larger, but the mse settles at about the same place.
+```{r}
+which.min(cvVals[,2])
+cvVals[1:30,2]
+```
+Look at the result from before
+
+```{r}
+gbm.perf(mod.gbm.cv)
+```
+
+#Question:
+How would you modify either CV approach to optimize over the shrinkage and the depth? 
+
+#Assignment: 
+Ada Boosting
+Boosting also works with classiﬁcation models. In this case, MSE is replaced by error rate. Again, a weak learner (a shallow tree) is the used at each stage. However, the means of “going after” the problems has to be adjusted. Here’s the idea behind AdaBoost. Supposethedatasethas N observations x1,x2,...,xn andresponse y1,...,y2. Forthealgorithm’spurposes, assume that yi =±1. A crucial part of the AdaBoost algorithm is how we weight the observations. Up to this point, our classiﬁers have assumed all the observations are on equal footing. However, most classiﬁcation algoriths (trees, included) allow a weight to be placed on each observation. In this way, the error rate now places more of an emphasis on some observations than others. Here is a summary of AdaBoosting. It follows the description given in CASI, Section 17.4, page 343.
+6
+Start with a set of weights wi = 1, i = 1,2,...,N. Usually, all the wi are equal at the start (but they don’t have to be). Boost a total of M times. For each m =1,2,...,M, do the following.
+
+• Fit the classiﬁer Gm(x) to the training data using weights wi. (Note: this means using the weights option in rpart. See documentation). 
+
+• Compute the weighted error. errm =PN i=1 wiI (yi 6= Gm(xi)) PN i=1 wi 
+
+• Compute αm =log1−errm errm  
+
+• Update the weights via: wi ← wi exp[αmI (yi 6= Gm(xi))] 
+
+• Repeat
+
+The ﬁnal outputed model is
+
+G(x)= sgn"M X m=1
+αmGm(x)#. where sgn(x) means return ±1 depending on the sign of the number x. What is going on here? Think about this algorithm. What is the logic behind be the choice of the weights and the value of αm? Why does this makes sense, especially in light of the logic behind the boosting for quantitative data.
+Implementation Build your own AdaBoost algorithm. Do so in the spirit of how we built the regression boosting algorithm fromclasslastweek. Thestructureisaboutthesame, there M boostingsteps, weakclassiﬁers(usingrpart), and a ﬁnal model consisting of the sum of the weak learner models built along the way. As part of your implementation, build your own synthetic data set. Make it so that it has at least two predictors. Try to arrange your data set so that it isn’t a simple logistic regression sort of data set. When you have a working version of AdaBoost, build it on some training data and evaluate it on some training data. Play around with diﬀerent values of M, perhaps even cross-validate on your data to ﬁnd the best value. Or, just use train+test combinations. Compare its performance to other algorithms such as KNN, Logistic (with shrinkage), and Random Forests. How well does yours work? How well does it work compared to the R gbm with AdaBoost? Once you have it working, try to apply it to the Spam data. Compare your AdaBoost to R’s version. In each case Use the SPAM data set from a couple classes ago as your test data set.

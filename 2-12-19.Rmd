@@ -1,0 +1,329 @@
+---
+title: "2-12-19.Rmd"
+author: "Nathan Kurtz-Enko"
+date: "2/12/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,cache=TRUE)
+library(tidyverse)
+```
+
+# Introduction
+The Bias-variance tradeoff is a  statement of expected values. It links together the Mean Squared Error, the Variance of the prediction, the square of the bias of the prediction, and the inherent "noise" in the modeling process. The true model has the form
+$$y=f(x)+\epsilon$$
+where $\epsilon$ we will assume is normally distributed with mean 0 and variance $\sigma^2$. Our goal is to estimate $f(x)$ with algorithm which we will call $\hat f(x)$.
+
+Imagine a fixed prediction value $x_0$ and a realized value $y_0=f(x_0)+\epsilon$. Bias-variance tradeoff says:
+
+$$E[(y_0-\hat f(x_0))^2]=\mathrm{Var}(\hat f(x_0))+[\mathrm{Bias}(\hat f(x_0))]^2+\mathrm{Var}(\epsilon).$$
+
+Let's look closely at each of these components. Keep in mind where the randomness is: the training set used to construct $\hat f$ and the realized value $y_0$. 
+
+* $E[(y_0-\hat f(x_0))^2]$ is the expected (average) value $(y_0-\hat f(x_0))^2$.
+* $\mathrm{Var}(\hat f(x_0))$ is the variance of the values $\hat f(x_0)$ generated from each training set.
+* $\mathrm{Bias}(\hat f(x_0))]$. The Bias of $\hat f(x_0)$ is the expected value of $\hat f(x_0)-f(x_0)$ over the  training data.
+* The last term is the noise, in this case $\mathrm{Var}(\epsilon)=\sigma^2$/
+
+ Keep in mind, the randomness in all of these scenarios comes from the training sets and the realized value of $y_0$. To model this effect we will be  repeatedly generating random training data sets and random values of $y_0=f(x_0)+\epsilon$
+ 
+ # Bias-Variance of a linear model.
+ 
+ Let's build a test example with a known underlying (true) model.
+
+Here's a resonable example.
+```{r}
+f <- function(x) {
+  x+ sin(3*pi*x)
+}
+
+```
+We can generate training data easily.
+```{r}
+N <-20 # number of data points
+sig<-.5 # for the noise
+x<-runif(N,0,1) # inputs
+y<-f(x)+rnorm(N,0,sig) #realized values
+train.df<-data.frame(x,y)
+```
+Here's our data.
+```{r}
+train.df %>% 
+  ggplot()+
+  geom_point(aes(x,y),color="blue")+
+  geom_smooth(aes(x,y), method = "lm")
+  ggtitle("Our data")
+```
+Now build a simple linear model for this data.
+```{r}
+mod<-lm(y~x,data=train.df) #Adding in the +I(x^2) makes the model quadratic, you can add morento make it cubic, quartic...
+```
+
+From the model, we can make predictions. 
+```{r}
+xVals<-seq(0,1,.01)
+yVals<-predict(mod,newdata=data.frame(x=xVals))
+
+```
+
+
+Plot the prediction
+```{r}
+ggplot()+
+  geom_point(data=train.df,aes(x,y),color="blue")+
+  ggtitle("Our data")+
+  geom_line(data=NULL,aes(x=xVals,y=yVals),color="red")
+```
+
+Make a prediction at a specific point $x_0$.
+```{r}
+##Prediction at a specified point
+x0<-0.75
+yPred<-predict(mod,newdata=data.frame(x=x0))
+yPred
+```
+Fascinating. Bias-variance tradeoff reflects what would happen if we repeated this process (starting witht the training data) a large number of times.
+
+It's worth looking at what the "true" value would have been at x0.
+
+```{r}
+yAct=f(x0)+rnorm(1,0,sig)
+```
+
+```{r}
+c(yPred,yAct)
+```
+So our prediction was off. We know it would be. The question is: Is there anything we can say much is misses in general.
+
+
+Let's look at this graphically.
+Let M represent the number of times we repeat the process.
+```{r}
+M<-100 
+```
+Generate predictions `r M` times. Keep track of everything as we go along
+```{r}
+xvals<-seq(0,1,by=0.01) ##includes x0
+n1<-length(xvals)
+predVals<-matrix(nrow=M,ncol=n1)
+for(m in 1:M){
+  ##new training data
+  x<-runif(N,0,1)
+  y<-f(x)+rnorm(N,0,sig)
+  ##build the model
+##  mod1<-lm(y~x+I(x^2)+I(x^3))
+  mod1<-lm(y~x+I(x^2)+I(x^3)+I(x^4))
+    predVals[m,]<-predict(mod1,newdata=data.frame(x=xvals))
+}
+##The actual "realize" values, build from f and noise. Each comes from the same f(x0) with different error terms. 
+yActs<-f(x0)+rnorm(M,0,sig)
+
+```
+
+
+Reshape the data into a data frame more suitable for plotting.
+
+```{r}
+predVals<-t(predVals)
+dim(predVals)<-c(M*n1,1)
+vals.df<-data.frame(x=rep(xvals,M),
+                    y=predVals,
+                    ##Which model
+                    model=factor(rep(1:M,each=n1)))
+
+```
+
+
+And the plot. You can see the variance of the predictions and also the bias. 
+The realized values ($y_0$'s in green) are centered around the "true model" (in blue).
+
+```{r}
+ggplot()+
+  geom_line(data=vals.df,aes(x,y,group=model),alpha=.1)+
+  geom_point(data=vals.df%>%filter(x==x0),
+             aes(x,y),color="red",size=1)+
+  geom_line(data=NULL,
+            aes(x=seq(0,1,.01),
+                y=f(seq(0,1,.01))),
+            size=1,
+            color="blue")+
+  geom_point(data=NULL,aes(x=x0+.01,y=yActs),
+             color="green",size=1)+
+  scale_y_continuous(limits=c(-2,6))+
+  ggtitle("Linear Model Variability (true model in blue,\n actual values in green,\n predicted values in red)")
+```
+
+## Calculating the MSE, Variance, and Bias.
+To calculate the expected values, we just have to repeat the key steps a large number of times. These steps are:
+
+```{r}
+## Training data
+x<-runif(N,0,1)
+y<-f(x)+rnorm(N,0,sig)
+## Build a model
+mod<-lm(y~x)
+##Make a prediction
+predict(mod,newdata=data.frame(x=x0))
+```
+
+It's always a good idea to package everything into a function.
+```{r}
+doPred<-function(x0){
+  x<-runif(N,0,1)
+  y<-f(x)+rnorm(N,0,sig)
+  ##model
+  mod<-lm(y~x)
+  ##prediction
+  predict(mod,newdata=data.frame(x=x0))
+}
+```
+You can check that doPred() computes a new prediction each time it is run.
+```{r}
+doPred(x0)
+doPred(x0)
+doPred(x0)
+```
+Now let's make a large number of predictions. This is a great place for the purrr function map_dbl.
+```{r}
+M<-1000
+##M predictions and their variance
+preds<-map_dbl(1:M,function(x) doPred(x0))
+hist(preds,breaks=50)
+var(preds)
+```
+We also need M realized values of $y_0$.
+```{r}
+yActs<-f(x0)+rnorm(M,0,sig)
+```
+First, the Mean Squared Error, MSW. This is how much we missed by, on average
+ $$MSE=E[(y_0-\hat f(x_0))^2]$$
+```{r}
+mse<-mean((preds-yActs)^2)
+mse
+```
+
+Now, the Bias squared. Bias is indicating if there is a tendency to by systemacially high or low. 
+ $Bias2=E[y_0-\hat f(x_0)]^2$
+```{r}
+bias2<-mean(preds-yVals)^2
+bias2
+
+```
+
+
+Next, the variance of the predictions.
+```{r}
+varP<-var(preds)
+varP
+```
+Lastly, the noise
+```{r}
+noise<-sig^2
+noise
+```
+If all went well, these quantities should be about the same.
+$$MSE=Var+Bias^2+Noise$$
+These should be about the same.
+```{r}
+c(mse,
+varP+bias2+noise)
+```
+
+
+#More Flexibility
+We could repeat this process by adding more flexibility to our model. For a linear model, this usually means adding higher order powers of the input variables.  Here's generically how it looks if want to add the second or third power.
+
+
+Here's a quadratic model.
+```{r}
+mod2<-lm(y~x+I(x^2))
+```
+
+Here's a cubic model
+```{r}
+mod3<-lm(y~x+I(x^2)+I(x^3))
+```
+
+
+```{r}
+summary(mod2)
+```
+
+```{r}
+summary(mod3)
+```
+
+In either case, we can repeat the process above and see what happens.
+
+## Assignment 1
+  * Recreate the plot "Linear Model Variability (true model in blue)" a models with more flexibility.
+  * Verify that the relationship $MSE=Var+Bias^2+Noise$ holds for arbitrary flexibililty. The ideal output would be a table with fields "flexibility", "MSE", and "Var+Bias^2+Noise."
+
+
+## Assignment 2
+
+Here you will build a version of Figure 2.12 of ISLR 
+  
+  ![Figure 2.12](ISLR_Figure2_12_1.png)
+  
+  In order to explore flexibily in detail, it is helpful to have a more algorithmic way to generate the higher order models. Here is a start. The function bldForm creates the string representing the formula that is used by the lm.
+```{r}
+bldForm<-function(d){
+  str<-"y~I(x)"
+  while(d>1){
+      str<-paste(str,sprintf("I(x^%s)",d),sep="+")
+    d<-d-1
+  }
+  str
+}
+```
+
+Testing...
+```{r}
+bldForm(1)
+bldForm(2)
+bldForm(3)
+bldForm(10)
+```
+This means we can high flexibility models easily. Note the use of "formula."
+```{r}
+deg<-6
+mod<-lm(formula(bldForm(deg)))
+summary(mod)
+```
+Now you can redo the doPred function.
+```{r}
+doPred<-function(x0,deg){
+  x<-runif(N,0,1)
+  y<-f(x)+rnorm(N,0,sig)
+  ##model
+  mod<-lm(formula(bldForm(deg)))
+  ##prediction
+  predict(mod,newdata=data.frame(x=x0))
+}
+```
+Testing..
+```{r}
+doPred(x0,1)
+doPred(x0,2)
+doPred(x0,10)
+```
+Or...with a 10th degree fit.
+```{r}
+preds<-map_dbl(1:100,function(x) doPred(x0,10))
+var(preds)
+hist(preds)
+```
+Warning: if the degree gets too large (>10 or so), numerical issues start to creep in. 
+
+Now....For our current model, do the following.
+
+* Plot MSE as function of flexibility.
+* Plot Bias^2 as as function of flexibility.
+* Plot the variance of $\hat f(x_0)$ as function of flexibility.
+* Generate your best version of  Figure 2.12 of ISLR.
+ 
+  
+
+
